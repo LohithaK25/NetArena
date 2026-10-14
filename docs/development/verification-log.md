@@ -4,7 +4,7 @@
 
 - **Date:** 2026-10-14
 - **Repository:** `E:\NetArena`
-- **Branch:** `main` (uncommitted initial scaffold; no commits or remotes)
+- **Branch:** `main` (Phase 0 committed as `42dd958`; no remote configured)
 - **Module:** `example.com/netarena` (provisional because no remote is configured)
 - **Status:** Go foundation implemented; local checks recorded below. Hosted CI and clean-checkout verification remain pending.
 - **Scope:** Minimal Go executable and unit test; GitHub Actions workflow; development documentation. No simulation engine or service features.
@@ -41,3 +41,16 @@ The documented exact local commands and formatting instructions are in the READM
 - The CLI test asserts the exact startup output. Simulation, API, persistence, frontend, and concurrency behavior are not implemented or verified.
 - Configure a 64-bit C compiler and rerun `go test -race ./...`; verify Actions and setup instructions on GitHub after configuring a remote and initial commit.
 - No benchmarks or deployment checks were run.
+<WritingBlock id="58315" variant="document">## Phase 1.1 — Request lifecycle
+- Date: 2026-10-14
+- Scope: Added the internal/sim request lifecycle model and unit tests.
+- Implementation: Added virtual tick representation, request states, terminal-state classification, validated state transitions, lifecycle timestamps, and failure-reason validation. Request fields are private so state changes go through the transition API.
+- Transition rules: Created requests can be queued, cancelled, or timed out; queued requests can start, fail, be cancelled, or time out; in-flight requests can succeed, fail, be cancelled, or time out. Terminal requests cannot transition again.
+- Tests — passed: go test ./....
+- Vet — passed: go vet ./....
+- Build — passed: go build ./....
+- Statement coverage — passed: go test -cover ./internal/sim reported 100.0%.
+- Whitespace check — passed: git diff --check. Git emitted LF-to-CRLF line-ending warnings; these did not indicate a whitespace-check failure.
+- Race detection: Still blocked by the previously documented local 32-bit GCC limitation. No race-enabled result is claimed.
+- Hosted CI: Not verified; no remote is configured.
+- Next milestone: Implement deterministic event ordering and a priority queue.</WritingBlock>

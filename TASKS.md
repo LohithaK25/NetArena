@@ -16,7 +16,7 @@
 The module path `example.com/netarena` is provisional until a canonical repository remote is configured. Local Go checks and exact tool versions are recorded in `docs/development/verification-log.md`; no hosted CI run is claimed.
 
 ## Phase 1 â€” Deterministic simulation foundation
-- [ ] Define domain types and request lifecycle.
+- [x] Define domain types and request lifecycle.
 - [ ] Define virtual time and event ordering/tie-breaking.
 - [ ] Implement event priority queue.
 - [ ] Implement minimal request/service/resource simulation.
