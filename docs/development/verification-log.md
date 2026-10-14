@@ -55,3 +55,19 @@ The documented exact local commands and formatting instructions are in the READM
 - Race detection: Still blocked by the previously documented local 32-bit GCC limitation. No race-enabled result is claimed.
 - Hosted CI: Not verified; no remote is configured.
 - Next milestone: Implement deterministic event ordering and a priority queue.
+## Phase 1.2 — Event model and deterministic priority queue
+
+- **Date:** 2026-10-14
+- **Scope:** Added event types, event validation, and a priority queue in `internal/sim`.
+- **Implementation:** Events use virtual ticks, sequence numbers, event types, and request IDs. The priority queue uses Go's standard-library `container/heap`.
+- **Ordering:** Events are ordered by ascending tick, then sequence number, event type, and request ID. This defines deterministic ordering when earlier keys tie.
+- **Validation:** Negative ticks, zero sequence numbers, unknown event types, and empty request IDs are rejected.
+- **Queue tests:** Verified ordering, empty-queue behavior, reuse after draining, invalid-event rejection, and deterministic fallback ordering for sequence collisions.
+- **Tests — passed:** `go test ./...`.
+- **Vet — passed:** `go vet ./...`.
+- **Build — passed:** `go build ./...`.
+- **Statement coverage — passed:** `go test -cover ./internal/sim` reported 98.0%.
+- **Whitespace check — passed:** `git diff --check`.
+- **Race detection:** Still blocked by the documented local 32-bit GCC limitation. No race-enabled result is claimed.
+- **Hosted CI:** Not verified; no remote is configured.
+- **Remaining work:** Implement request/service/resource simulation, invariant and deterministic replay tests, benchmarks, and the first canonical scenario.

@@ -17,8 +17,8 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 
 ## Phase 1 â€” Deterministic simulation foundation
 - [x] Define domain types and request lifecycle.
-- [ ] Define virtual time and event ordering/tie-breaking.
-- [ ] Implement event priority queue.
+- [x] Define virtual time and event ordering/tie-breaking.
+- [x] Implement event priority queue.
 - [ ] Implement minimal request/service/resource simulation.
 - [ ] Add unit, invariant, deterministic replay, and benchmark tests.
 - [ ] Verify the first canonical scenario.
