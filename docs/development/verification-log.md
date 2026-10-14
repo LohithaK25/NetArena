@@ -71,3 +71,12 @@ The documented exact local commands and formatting instructions are in the READM
 - **Race detection:** Still blocked by the documented local 32-bit GCC limitation. No race-enabled result is claimed.
 - **Hosted CI:** Not verified; no remote is configured.
 - **Remaining work:** Implement request/service/resource simulation, invariant and deterministic replay tests, benchmarks, and the first canonical scenario.
+## Phase 1.3
+- **Date:** 2026-10-14
+- The discrete-event engine and its fixed service capacity and duration.
+- FIFO waiting requests and service completion events.
+- Deterministic event ordering and replay tests.
+- Validation for invalid configuration, duplicate IDs, past arrivals, tick overflow, and event-sequence exhaustion.
+- The waiting-queue regression test.
+- **Verification results:** go test ./internal/sim, go test ./..., go vet ./..., and go build ./... passed.
+-Any limitations still present, particularly that timeout handling is not implemented and race detection/hosted CI remain unverified.

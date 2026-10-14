@@ -19,9 +19,9 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Define domain types and request lifecycle.
 - [x] Define virtual time and event ordering/tie-breaking.
 - [x] Implement event priority queue.
-- [ ] Implement minimal request/service/resource simulation.
-- [ ] Add unit, invariant, deterministic replay, and benchmark tests.
-- [ ] Verify the first canonical scenario.
+- [x] Implement minimal request/service/resource simulation.
+- [x] Add unit, invariant, deterministic replay, and benchmark tests.
+- [x] Verify the first canonical scenario.
 
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.
