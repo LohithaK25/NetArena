@@ -41,7 +41,8 @@ The documented exact local commands and formatting instructions are in the READM
 - The CLI test asserts the exact startup output. Simulation, API, persistence, frontend, and concurrency behavior are not implemented or verified.
 - Configure a 64-bit C compiler and rerun `go test -race ./...`; verify Actions and setup instructions on GitHub after configuring a remote and initial commit.
 - No benchmarks or deployment checks were run.
-<WritingBlock id="58315" variant="document">## Phase 1.1 — Request lifecycle
+
+## Phase 1.1 — Request lifecycle
 - Date: 2026-10-14
 - Scope: Added the internal/sim request lifecycle model and unit tests.
 - Implementation: Added virtual tick representation, request states, terminal-state classification, validated state transitions, lifecycle timestamps, and failure-reason validation. Request fields are private so state changes go through the transition API.
@@ -53,4 +54,4 @@ The documented exact local commands and formatting instructions are in the READM
 - Whitespace check — passed: git diff --check. Git emitted LF-to-CRLF line-ending warnings; these did not indicate a whitespace-check failure.
 - Race detection: Still blocked by the previously documented local 32-bit GCC limitation. No race-enabled result is claimed.
 - Hosted CI: Not verified; no remote is configured.
-- Next milestone: Implement deterministic event ordering and a priority queue.</WritingBlock>
+- Next milestone: Implement deterministic event ordering and a priority queue.
