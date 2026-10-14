@@ -470,3 +470,244 @@ func TestCompletionPreservesWaitingRequestWhenNextServiceCannotStart(t *testing.
 		t.Fatalf("req-2 state = %v, want %v", got, RequestQueued)
 	}
 }
+
+func assertEngineInvariants(t *testing.T, engine *Engine) {
+	t.Helper()
+
+	if engine.busyWorkers < 0 {
+		t.Fatalf("busyWorkers = %d, want >= 0", engine.busyWorkers)
+	}
+	if engine.busyWorkers > engine.serviceCapacity {
+		t.Fatalf(
+			"busyWorkers = %d exceeds capacity %d",
+			engine.busyWorkers,
+			engine.serviceCapacity,
+		)
+	}
+
+	inFlight := 0
+	for id, request := range engine.requests {
+		if request.ID() != id {
+			t.Fatalf(
+				"request registry key = %q, but request ID = %q",
+				id,
+				request.ID(),
+			)
+		}
+
+		if request.State() == RequestInFlight {
+			inFlight++
+		}
+
+		if request.CreatedAt() < 0 {
+			t.Fatalf("request %q has negative creation tick", id)
+		}
+
+		queuedAt, hasQueuedAt := request.QueuedAt()
+		startedAt, hasStartedAt := request.StartedAt()
+		finishedAt, hasFinishedAt := request.FinishedAt()
+
+		if hasQueuedAt && queuedAt < request.CreatedAt() {
+			t.Fatalf("request %q was queued before creation", id)
+		}
+
+		if hasStartedAt {
+			if !hasQueuedAt {
+				t.Fatalf("request %q started without being queued", id)
+			}
+			if startedAt < queuedAt {
+				t.Fatalf("request %q started before it was queued", id)
+			}
+		}
+
+		if hasFinishedAt {
+			if !hasStartedAt {
+				t.Fatalf("request %q finished without starting service", id)
+			}
+			if finishedAt < startedAt {
+				t.Fatalf("request %q finished before it started", id)
+			}
+		}
+
+	}
+
+	if inFlight != engine.busyWorkers {
+		t.Fatalf(
+			"in-flight requests = %d, busyWorkers = %d",
+			inFlight,
+			engine.busyWorkers,
+		)
+	}
+
+	seen := make(map[string]bool, len(engine.waiting))
+	for _, id := range engine.waiting {
+		if seen[id] {
+			t.Fatalf("request %q appears more than once in waiting queue", id)
+		}
+		seen[id] = true
+
+		request, exists := engine.requests[id]
+		if !exists {
+			t.Fatalf("waiting queue references unknown request %q", id)
+		}
+		if request.State() != RequestQueued {
+			t.Fatalf(
+				"waiting request %q has state %v, want %v",
+				id,
+				request.State(),
+				RequestQueued,
+			)
+		}
+	}
+}
+
+func TestEngineMaintainsInvariantsDuringService(t *testing.T) {
+	engine, err := NewEngine(1, 2)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	for _, id := range []string{"req-1", "req-2"} {
+		if err := engine.ScheduleArrival(id, 0); err != nil {
+			t.Fatalf("ScheduleArrival(%q) error = %v", id, err)
+		}
+	}
+
+	assertEngineInvariants(t, engine)
+
+	// Process the first arrival.
+	event, ok := engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected first arrival event")
+	}
+	engine.now = event.At
+	if err := engine.handleArrival(event.RequestID); err != nil {
+		t.Fatalf("handleArrival() error = %v", err)
+	}
+	assertEngineInvariants(t, engine)
+
+	// Process the second arrival; it must wait for the busy worker.
+	event, ok = engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected second arrival event")
+	}
+	engine.now = event.At
+	if err := engine.handleArrival(event.RequestID); err != nil {
+		t.Fatalf("handleArrival() error = %v", err)
+	}
+	assertEngineInvariants(t, engine)
+
+	if len(engine.waiting) != 1 || engine.waiting[0] != "req-2" {
+		t.Fatalf("waiting = %v, want [req-2]", engine.waiting)
+	}
+
+	// Complete the first request; the waiting request should start.
+	event, ok = engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected service completion event")
+	}
+	engine.now = event.At
+	if err := engine.handleCompletion(event.RequestID); err != nil {
+		t.Fatalf("handleCompletion() error = %v", err)
+	}
+	assertEngineInvariants(t, engine)
+
+	if got := engine.Requests()["req-2"].State(); got != RequestInFlight {
+		t.Fatalf("req-2 state = %v, want %v", got, RequestInFlight)
+	}
+
+	// Complete the second request and verify the final state.
+	event, ok = engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected second service completion event")
+	}
+	engine.now = event.At
+	if err := engine.handleCompletion(event.RequestID); err != nil {
+		t.Fatalf("handleCompletion() error = %v", err)
+	}
+	assertEngineInvariants(t, engine)
+
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Fatalf("BusyWorkers() = %d, want 0", got)
+	}
+	if len(engine.waiting) != 0 {
+		t.Fatalf("waiting queue = %v, want empty", engine.waiting)
+	}
+}
+
+func TestCanonicalScenario(t *testing.T) {
+	engine, err := NewEngine(2, 3)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	arrivals := []struct {
+		id string
+		at Tick
+	}{
+		{id: "req-a", at: 0},
+		{id: "req-b", at: 0},
+		{id: "req-c", at: 1},
+		{id: "req-d", at: 2},
+	}
+
+	for _, arrival := range arrivals {
+		if err := engine.ScheduleArrival(arrival.id, arrival.at); err != nil {
+			t.Fatalf("ScheduleArrival(%q) error = %v", arrival.id, err)
+		}
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	assertEngineInvariants(t, engine)
+
+	expected := map[string]struct {
+		started  Tick
+		finished Tick
+	}{
+		"req-a": {started: 0, finished: 3},
+		"req-b": {started: 0, finished: 3},
+		"req-c": {started: 3, finished: 6},
+		"req-d": {started: 3, finished: 6},
+	}
+
+	requests := engine.Requests()
+	if len(requests) != len(expected) {
+		t.Fatalf("request count = %d, want %d", len(requests), len(expected))
+	}
+
+	for id, want := range expected {
+		request, exists := requests[id]
+		if !exists {
+			t.Fatalf("missing request %q", id)
+		}
+
+		if got := request.State(); got != RequestSucceeded {
+			t.Errorf("%s state = %v, want %v", id, got, RequestSucceeded)
+		}
+
+		started, hasStarted := request.StartedAt()
+		if !hasStarted || started != want.started {
+			t.Errorf("%s started at (%d, %t), want (%d, true)",
+				id, started, hasStarted, want.started)
+		}
+
+		finished, hasFinished := request.FinishedAt()
+		if !hasFinished || finished != want.finished {
+			t.Errorf("%s finished at (%d, %t), want (%d, true)",
+				id, finished, hasFinished, want.finished)
+		}
+	}
+
+	if got := engine.CurrentTick(); got != 6 {
+		t.Errorf("CurrentTick() = %d, want 6", got)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+	if len(engine.waiting) != 0 {
+		t.Errorf("waiting queue = %v, want empty", engine.waiting)
+	}
+}

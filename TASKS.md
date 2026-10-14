@@ -22,6 +22,9 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Implement minimal request/service/resource simulation.
 - [x] Add unit, invariant, deterministic replay, and benchmark tests.
 - [x] Verify the first canonical scenario.
+- [x] Add invariant and deterministic replay tests.
+- [x] Add event queue and engine benchmarks.
+- [x] Verify the canonical scenario.
 
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.

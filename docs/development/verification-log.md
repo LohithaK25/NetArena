@@ -80,3 +80,37 @@ The documented exact local commands and formatting instructions are in the READM
 - The waiting-queue regression test.
 - **Verification results:** go test ./internal/sim, go test ./..., go vet ./..., and go build ./... passed.
 -Any limitations still present, particularly that timeout handling is not implemented and race detection/hosted CI remain unverified.
+## Phase 1.4 verification
+- **Date:** 2026-10-14
+**Scope**
+- Added an engine invariant helper to validate worker capacity, in-flight request counts, request registry consistency, waiting-queue uniqueness, and timestamp ordering.
+- Added a test that checks invariants during request arrival, queueing, service, and completion.
+- Added benchmarks for event queue push/pop operations and a complete 1,000-request engine workload.
+- Added a canonical deterministic scenario with two workers, service duration of three ticks, and four requests arriving at ticks 0, 0, 1, and 2.
+
+**Canonical scenario results**
+- All four requests reached `RequestSucceeded`.
+- `req-a` and `req-b` started at tick 0 and finished at tick 3.
+- `req-c` and `req-d` started at tick 3 and finished at tick 6.
+- Final virtual tick: 6.
+- Final busy worker count: 0.
+- Final waiting queue: empty.
+
+**Verification**
+- `go test ./internal/sim -run '^TestCanonicalScenario$' -v` — passed.
+- `go test ./...` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `go test ./internal/sim -run '^$' -bench . -benchmem` — passed.
+
+**Benchmark baseline**
+- Environment: Windows/amd64, Intel Core i7-1165G7 @ 2.80 GHz.
+- Event queue, 1,000 pushes and pops: 266,585 ns/op in the first run; 396,420 ns/op in the second run.
+- Engine, 1,000 requests: 855,053 ns/op in the first run; 870,424 ns/op in the second run.
+- Benchmark values are initial measurements and have not been used to claim an optimization.
+
+**Limitations**
+- Request timeout handling remains unimplemented.
+- Local race-detector verification remains blocked by the available C compiler.
+- Hosted GitHub Actions CI remains unverified.
+- Benchmark results may vary with system load.
