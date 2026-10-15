@@ -16,6 +16,7 @@ const (
 	RequestCreated RequestState = iota + 1
 	RequestQueued
 	RequestInFlight
+	RequestRetryWaiting
 	RequestSucceeded
 	RequestFailed
 	RequestCancelled
@@ -31,6 +32,8 @@ func (s RequestState) String() string {
 		return "queued"
 	case RequestInFlight:
 		return "in_flight"
+	case RequestRetryWaiting:
+		return "retry_waiting"
 	case RequestSucceeded:
 		return "succeeded"
 	case RequestFailed:
@@ -68,6 +71,7 @@ type Request struct {
 	hasStartedAt     bool
 	hasFinishedAt    bool
 	failureReason    string
+	attempts         int
 }
 
 // NewRequest creates a request in the created state.
@@ -111,6 +115,11 @@ func (r *Request) FinishedAt() (Tick, bool) {
 	return r.finishedAt, r.hasFinishedAt
 }
 
+// Attempts returns the number of service attempts started for this request.
+func (r *Request) Attempts() int {
+	return r.attempts
+}
+
 func (r *Request) FailureReason() string {
 	return r.failureReason
 }
@@ -151,6 +160,7 @@ func (r *Request) Transition(next RequestState, at Tick, reason string) error {
 	case RequestInFlight:
 		r.startedAt = at
 		r.hasStartedAt = true
+		r.attempts++
 	case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
 		r.finishedAt = at
 		r.hasFinishedAt = true
@@ -179,6 +189,11 @@ func canTransition(current, next RequestState) bool {
 	case RequestInFlight:
 		return next == RequestSucceeded ||
 			next == RequestFailed ||
+			next == RequestRetryWaiting ||
+			next == RequestCancelled ||
+			next == RequestTimedOut
+	case RequestRetryWaiting:
+		return next == RequestQueued ||
 			next == RequestCancelled ||
 			next == RequestTimedOut
 	default:
@@ -191,4 +206,22 @@ func canTransition(current, next RequestState) bool {
 func (r *Request) clone() *Request {
 	snapshot := *r
 	return &snapshot
+}
+
+// RetryPolicy defines how many times a request may be retried after
+// an eligible failure and the delay before each retry.
+type RetryPolicy struct {
+	MaxRetries int
+	Backoff    Tick
+}
+
+// Validate checks whether the retry policy is valid.
+func (p RetryPolicy) Validate() error {
+	if p.MaxRetries < 0 {
+		return fmt.Errorf("max retries must be non-negative")
+	}
+	if p.Backoff < 0 {
+		return fmt.Errorf("retry backoff must be non-negative")
+	}
+	return nil
 }

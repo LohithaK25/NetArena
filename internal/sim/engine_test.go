@@ -453,7 +453,7 @@ func TestCompletionPreservesWaitingRequestWhenNextServiceCannotStart(t *testing.
 	// Leave the completion event queued, but exhaust the sequence counter.
 	engine.nextSequence = math.MaxUint64
 
-	err = engine.handleCompletion("req-1", "")
+	err = engine.handleCompletion("req-1", "", engine.attemptIDs["req-1"])
 	if err == nil {
 		t.Fatal("handleCompletion() succeeded despite sequence exhaustion")
 	}
@@ -607,7 +607,7 @@ func TestEngineMaintainsInvariantsDuringService(t *testing.T) {
 		t.Fatal("expected service completion event")
 	}
 	engine.now = event.At
-	if err := engine.handleCompletion(event.RequestID, ""); err != nil {
+	if err := engine.handleCompletion(event.RequestID, "", event.AttemptID); err != nil {
 		t.Fatalf("handleCompletion() error = %v", err)
 	}
 	assertEngineInvariants(t, engine)
@@ -622,7 +622,7 @@ func TestEngineMaintainsInvariantsDuringService(t *testing.T) {
 		t.Fatal("expected second service completion event")
 	}
 	engine.now = event.At
-	if err := engine.handleCompletion(event.RequestID, ""); err != nil {
+	if err := engine.handleCompletion(event.RequestID, "", event.AttemptID); err != nil {
 		t.Fatalf("handleCompletion() error = %v", err)
 	}
 	assertEngineInvariants(t, engine)

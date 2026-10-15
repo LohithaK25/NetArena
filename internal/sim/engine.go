@@ -18,10 +18,15 @@ type Engine struct {
 	waiting         []string
 	router          *Router
 	requestNodes    map[string]string
+	requestSources  map[string]string
 	visitedNodes    map[string]map[string]bool
 	workerBusy      map[string]int
 	workerWaiting   map[string][]string
 	workerOnline    map[string]bool
+	retryPolicy     RetryPolicy
+	retryCounts     map[string]int
+	attemptIDs      map[string]uint64
+	retryWorkers    map[string]string
 }
 
 // NewEngine creates an engine with a fixed service capacity and duration.
@@ -39,10 +44,14 @@ func NewEngine(serviceCapacity int, serviceDuration Tick) (*Engine, error) {
 		serviceCapacity: serviceCapacity,
 		serviceDuration: serviceDuration,
 		requestNodes:    make(map[string]string),
+		requestSources:  make(map[string]string),
 		visitedNodes:    make(map[string]map[string]bool),
 		workerBusy:      make(map[string]int),
 		workerWaiting:   make(map[string][]string),
 		workerOnline:    make(map[string]bool),
+		retryCounts:     make(map[string]int),
+		attemptIDs:      make(map[string]uint64),
+		retryWorkers:    make(map[string]string),
 	}, nil
 }
 
@@ -118,6 +127,7 @@ func (e *Engine) scheduleArrival(requestID string, at Tick, sourceNode string) e
 	e.requests[requestID] = request
 
 	if sourceNode != "" {
+		e.requestSources[requestID] = sourceNode
 		e.requestNodes[requestID] = sourceNode
 		e.visitedNodes[requestID] = map[string]bool{sourceNode: true}
 	}
@@ -260,7 +270,7 @@ func (e *Engine) Run() error {
 				return err
 			}
 		case EventServiceCompletes:
-			if err := e.handleCompletion(event.RequestID, event.NodeID); err != nil {
+			if err := e.handleCompletion(event.RequestID, event.NodeID, event.AttemptID); err != nil {
 				return err
 			}
 		case EventRequestTimeout:
@@ -277,6 +287,10 @@ func (e *Engine) Run() error {
 			}
 		case EventWorkerRecovers:
 			if err := e.handleWorkerRecovery(event.NodeID); err != nil {
+				return err
+			}
+		case EventRequestRetry:
+			if err := e.handleRequestRetry(event.RequestID); err != nil {
 				return err
 			}
 		default:
@@ -476,6 +490,8 @@ func (e *Engine) startService(request *Request) error {
 	if err := request.Transition(RequestInFlight, e.now, ""); err != nil {
 		return err
 	}
+	e.attemptIDs[request.ID()]++
+	attemptID := e.attemptIDs[request.ID()]
 
 	e.busyWorkers++
 
@@ -483,6 +499,7 @@ func (e *Engine) startService(request *Request) error {
 		At:        e.now + e.serviceDuration,
 		Type:      EventServiceCompletes,
 		RequestID: request.ID(),
+		AttemptID: attemptID,
 	})
 }
 
@@ -504,6 +521,9 @@ func (e *Engine) startWorkerService(request *Request, workerID string) error {
 		return err
 	}
 
+	e.attemptIDs[request.ID()]++
+	attemptID := e.attemptIDs[request.ID()]
+
 	e.workerBusy[workerID]++
 	e.busyWorkers++
 
@@ -512,6 +532,7 @@ func (e *Engine) startWorkerService(request *Request, workerID string) error {
 		Type:      EventServiceCompletes,
 		RequestID: request.ID(),
 		NodeID:    workerID,
+		AttemptID: attemptID,
 	}); err != nil {
 		e.workerBusy[workerID]--
 		e.busyWorkers--
@@ -521,10 +542,13 @@ func (e *Engine) startWorkerService(request *Request, workerID string) error {
 	return nil
 }
 
-func (e *Engine) handleCompletion(requestID, workerID string) error {
+func (e *Engine) handleCompletion(requestID, workerID string, attemptID uint64) error {
 	request, exists := e.requests[requestID]
 	if !exists {
 		return fmt.Errorf("completion references unknown request %q", requestID)
+	}
+	if attemptID != e.attemptIDs[requestID] {
+		return nil
 	}
 	switch request.State() {
 	case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
@@ -588,6 +612,7 @@ func (e *Engine) handleCompletion(requestID, workerID string) error {
 
 	e.workerBusy[workerID]--
 	e.busyWorkers--
+
 	delete(e.requestNodes, requestID)
 	delete(e.visitedNodes, requestID)
 
@@ -760,18 +785,48 @@ func (e *Engine) handleWorkerFailure(workerID string) error {
 			continue
 		}
 
-		if err := request.Transition(
-			RequestFailed,
-			e.now,
-			fmt.Sprintf("worker %q failed", workerID),
-		); err != nil {
-			return err
-		}
-
 		e.workerBusy[workerID]--
 		e.busyWorkers--
+		e.attemptIDs[requestID]++
 		delete(e.requestNodes, requestID)
 		delete(e.visitedNodes, requestID)
+
+		if e.retryCounts[requestID] < e.retryPolicy.MaxRetries {
+			e.retryWorkers[requestID] = workerID
+			if e.now > Tick(math.MaxInt64)-e.retryPolicy.Backoff {
+				return fmt.Errorf("retry tick overflow for request %q", requestID)
+			}
+			if e.nextSequence == math.MaxUint64 {
+				return fmt.Errorf("event sequence exhausted")
+			}
+
+			if err := request.Transition(
+				RequestRetryWaiting,
+				e.now,
+				"",
+			); err != nil {
+				return err
+			}
+
+			e.retryCounts[requestID]++
+
+			if err := e.schedule(Event{
+				At:        e.now + e.retryPolicy.Backoff,
+				Type:      EventRequestRetry,
+				RequestID: requestID,
+			}); err != nil {
+				return err
+			}
+		} else {
+			if err := request.Transition(
+				RequestFailed,
+				e.now,
+				fmt.Sprintf("worker %q failed", workerID),
+			); err != nil {
+				return err
+			}
+		}
+
 	}
 
 	if e.workerBusy[workerID] != 0 {
@@ -822,12 +877,28 @@ func (e *Engine) handleWorkerRecovery(workerID string) error {
 				requestID,
 			)
 		}
-		if request.State() != RequestQueued {
+
+		if request.State() == RequestSucceeded ||
+			request.State() == RequestFailed ||
+			request.State() == RequestCancelled ||
+			request.State() == RequestTimedOut {
+			e.workerWaiting[workerID] = waiting[1:]
+			continue
+		}
+
+		if request.State() != RequestQueued &&
+			request.State() != RequestRetryWaiting {
 			return fmt.Errorf(
 				"worker %q waiting request %q is not queued",
 				workerID,
 				requestID,
 			)
+		}
+
+		if request.State() == RequestRetryWaiting {
+			if err := request.Transition(RequestQueued, e.now, ""); err != nil {
+				return err
+			}
 		}
 
 		if err := e.startWorkerService(request, workerID); err != nil {
@@ -838,4 +909,72 @@ func (e *Engine) handleWorkerRecovery(workerID string) error {
 	}
 
 	return nil
+}
+
+// SetRetryPolicy configures the retry behavior for eligible request failures.
+func (e *Engine) SetRetryPolicy(policy RetryPolicy) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+
+	e.retryPolicy = policy
+	return nil
+}
+
+func (e *Engine) handleRequestRetry(requestID string) error {
+	request, exists := e.requests[requestID]
+	if !exists {
+		return fmt.Errorf("retry references unknown request %q", requestID)
+	}
+
+	if request.State() != RequestRetryWaiting {
+		return nil
+	}
+
+	if e.router == nil {
+		if err := request.Transition(RequestQueued, e.now, ""); err != nil {
+			return err
+		}
+		if e.busyWorkers < e.serviceCapacity {
+			return e.startService(request)
+		}
+		e.waiting = append(e.waiting, requestID)
+		return nil
+	}
+
+	sourceNode, exists := e.requestSources[requestID]
+	if !exists {
+		return fmt.Errorf(
+			"cannot retry request %q: original source not recorded",
+			requestID,
+		)
+	}
+
+	workerID, hasRetryWorker := e.retryWorkers[requestID]
+	if !hasRetryWorker {
+		return fmt.Errorf(
+			"cannot retry request %q: failed worker not recorded",
+			requestID,
+		)
+	}
+
+	if !e.workerOnline[workerID] {
+		e.workerWaiting[workerID] = append(e.workerWaiting[workerID], requestID)
+		e.requestNodes[requestID] = workerID
+		return nil
+	}
+
+	if err := request.Transition(RequestQueued, e.now, ""); err != nil {
+		return err
+	}
+
+	delete(e.requestNodes, requestID)
+	delete(e.visitedNodes, requestID)
+
+	e.requestNodes[requestID] = sourceNode
+	e.visitedNodes[requestID] = map[string]bool{
+		sourceNode: true,
+	}
+
+	return e.handleRouteHop(requestID, sourceNode)
 }

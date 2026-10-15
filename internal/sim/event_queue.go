@@ -45,12 +45,14 @@ func eventPriority(eventType EventType) int {
 		return 3
 	case EventWorkerRecovers:
 		return 4
-	case EventServiceCompletes:
+	case EventRequestRetry:
 		return 5
-	case EventRouteHop:
+	case EventServiceCompletes:
 		return 6
-	default:
+	case EventRouteHop:
 		return 7
+	default:
+		return 8
 	}
 }
 

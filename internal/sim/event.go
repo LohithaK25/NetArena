@@ -13,6 +13,7 @@ const (
 	EventRouteHop
 	EventWorkerFails
 	EventWorkerRecovers
+	EventRequestRetry
 )
 
 // String returns a readable event type name.
@@ -32,6 +33,8 @@ func (t EventType) String() string {
 		return "worker_fails"
 	case EventWorkerRecovers:
 		return "worker_recovers"
+	case EventRequestRetry:
+		return "request_retry"
 	default:
 		return "unknown"
 	}
@@ -46,6 +49,7 @@ type Event struct {
 	Type      EventType
 	RequestID string
 	NodeID    string
+	AttemptID uint64
 }
 
 // Validate checks that an event contains valid scheduling data.
@@ -56,7 +60,7 @@ func (e Event) Validate() error {
 	if e.Sequence == 0 {
 		return fmt.Errorf("event sequence must be positive")
 	}
-	if e.Type < EventRequestArrives || e.Type > EventWorkerRecovers {
+	if e.Type < EventRequestArrives || e.Type > EventRequestRetry {
 		return fmt.Errorf("invalid event type: %d", e.Type)
 	}
 	switch e.Type {

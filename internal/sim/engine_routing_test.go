@@ -348,7 +348,7 @@ func TestRoutedCompletionPreservesWaitingRequestWhenNextServiceCannotStart(t *te
 	engine.now = event.At
 	engine.nextSequence = ^uint64(0)
 
-	err = engine.handleCompletion(event.RequestID, event.NodeID)
+	err = engine.handleCompletion(event.RequestID, event.NodeID, event.AttemptID)
 
 	if got := engine.workerBusy["worker"]; got != 0 {
 		t.Errorf("workerBusy = %d, want 0", got)
@@ -880,5 +880,246 @@ func TestRequestArrivingAtFailedWorkerWaitsForRecovery(t *testing.T) {
 	startedAt, ok := request.StartedAt()
 	if !ok || startedAt != 8 {
 		t.Errorf("StartedAt() = (%d, %v), want (8, true)", startedAt, ok)
+	}
+}
+
+func TestWorkerFailureCanRetryRequest(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 2, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// This test will use the retry policy API introduced in this phase.
+	if err := engine.SetRetryPolicy(RetryPolicy{
+		MaxRetries: 1,
+		Backoff:    3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-retry", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 6); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-retry"]
+	if request.State() != RequestSucceeded {
+		t.Fatalf("request state = %s, want succeeded", request.State())
+	}
+
+	startedAt, ok := request.StartedAt()
+	if !ok || startedAt != 7 {
+		t.Errorf("StartedAt() = (%d, %v), want (7, true)", startedAt, ok)
+	}
+}
+
+func TestWorkerFailureExhaustsRetryBudget(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 2, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.SetRetryPolicy(RetryPolicy{
+		MaxRetries: 0,
+		Backoff:    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-exhausted", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-exhausted"]
+	if request.State() != RequestFailed {
+		t.Fatalf("request state = %s, want failed", request.State())
+	}
+	if got := request.FailureReason(); got != `worker "worker" failed` {
+		t.Errorf("failure reason = %q, want worker failure reason", got)
+	}
+	if got := request.Attempts(); got != 1 {
+		t.Errorf("Attempts() = %d, want 1", got)
+	}
+}
+
+func TestWorkerFailureRetryWithZeroBackoff(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 2, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.SetRetryPolicy(RetryPolicy{
+		MaxRetries: 1,
+		Backoff:    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-zero-backoff", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 4); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-zero-backoff"]
+	if request.State() != RequestSucceeded {
+		t.Fatalf("request state = %s, want succeeded", request.State())
+	}
+	if got := request.Attempts(); got != 2 {
+		t.Errorf("Attempts() = %d, want 2", got)
+	}
+}
+
+func TestWorkerFailureRetryWaitsForFailedWorker(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker-a", Type: NodeWorker},
+			{ID: "worker-b", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker-a", Latency: 1},
+			{From: "client", To: "worker-b", Latency: 2},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(2, 2, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.SetRetryPolicy(RetryPolicy{
+		MaxRetries: 1,
+		Backoff:    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-multi-worker", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker-a", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker-a", 6); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-multi-worker"]
+	if request.State() != RequestSucceeded {
+		t.Fatalf("request state = %s, want succeeded", request.State())
+	}
+
+	if got := request.Attempts(); got != 2 {
+		t.Errorf("Attempts() = %d, want 2", got)
+	}
+
+	startedAt, ok := request.StartedAt()
+	if !ok || startedAt != 6 {
+		t.Errorf("StartedAt() = (%d, %v), want (6, true)", startedAt, ok)
+	}
+}
+
+func TestCancelledRetryDoesNotBlockWorkerRecovery(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 2, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.SetRetryPolicy(RetryPolicy{
+		MaxRetries: 1,
+		Backoff:    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-cancelled-retry", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleCancel("req-cancelled-retry", 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 6); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-cancelled-retry"]
+	if request.State() != RequestCancelled {
+		t.Fatalf("request state = %s, want cancelled", request.State())
 	}
 }
