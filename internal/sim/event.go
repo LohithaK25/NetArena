@@ -11,6 +11,8 @@ const (
 	EventRequestCancel
 	EventServiceCompletes
 	EventRouteHop
+	EventWorkerFails
+	EventWorkerRecovers
 )
 
 // String returns a readable event type name.
@@ -26,6 +28,10 @@ func (t EventType) String() string {
 		return "service_completes"
 	case EventRouteHop:
 		return "route_hop"
+	case EventWorkerFails:
+		return "worker_fails"
+	case EventWorkerRecovers:
+		return "worker_recovers"
 	default:
 		return "unknown"
 	}
@@ -50,11 +56,18 @@ func (e Event) Validate() error {
 	if e.Sequence == 0 {
 		return fmt.Errorf("event sequence must be positive")
 	}
-	if e.Type < EventRequestArrives || e.Type > EventRouteHop {
+	if e.Type < EventRequestArrives || e.Type > EventWorkerRecovers {
 		return fmt.Errorf("invalid event type: %d", e.Type)
 	}
-	if e.RequestID == "" {
-		return fmt.Errorf("event request ID must not be empty")
+	switch e.Type {
+	case EventWorkerFails, EventWorkerRecovers:
+		if e.NodeID == "" {
+			return fmt.Errorf("worker event node ID must not be empty")
+		}
+	default:
+		if e.RequestID == "" {
+			return fmt.Errorf("event request ID must not be empty")
+		}
 	}
 	if e.Type == EventRouteHop && e.NodeID == "" {
 		return fmt.Errorf("route-hop event node ID must not be empty")

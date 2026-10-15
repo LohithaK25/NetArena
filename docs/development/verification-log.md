@@ -208,3 +208,31 @@ The documented exact local commands and formatting instructions are in the READM
 ### Limitations
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI has not been run because no Git remote is configured.
+
+## Phase 2.6 - Worker Failure Injection and Recovery
+
+**Date:** 2026-10-15
+
+### Implemented
+- Added worker failure and recovery events that identify workers independently of request IDs.
+- Added scheduling validation for missing topology, invalid worker targets, non-worker nodes, and past timestamps.
+- Defined deterministic event priority: arrival, timeout, cancellation, worker failure, worker recovery, service completion, then route hop.
+- Worker failure marks the worker offline and fails its in-flight requests, releasing their active capacity.
+- Requests already queued at a failed worker remain queued until recovery.
+- Requests already in transit to a worker that fails before arrival wait in that worker's queue until recovery.
+- Worker recovery resumes queued requests in FIFO order up to the worker's configured capacity.
+- Filtered routing skips offline worker destinations when an available destination can be selected.
+- Added worker online/offline state to per-worker metrics.
+- Added regression tests for event validation, in-flight failure, stale completion events, FIFO recovery, routing around offline workers, requests arriving during an outage, and worker metrics.
+
+### Verification
+- `go test ./internal/sim -count=1` - passed.
+- `go test ./...` - passed.
+- `go vet ./...` - passed.
+- `go build ./...` - passed.
+- `git diff --check` - passed; Git emitted only Windows LF/CRLF conversion warnings.
+
+### Limitations
+- If all eligible outgoing destinations are unavailable, routing currently fails the request instead of waiting at the upstream node.
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.

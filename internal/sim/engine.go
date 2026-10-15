@@ -21,6 +21,7 @@ type Engine struct {
 	visitedNodes    map[string]map[string]bool
 	workerBusy      map[string]int
 	workerWaiting   map[string][]string
+	workerOnline    map[string]bool
 }
 
 // NewEngine creates an engine with a fixed service capacity and duration.
@@ -41,6 +42,7 @@ func NewEngine(serviceCapacity int, serviceDuration Tick) (*Engine, error) {
 		visitedNodes:    make(map[string]map[string]bool),
 		workerBusy:      make(map[string]int),
 		workerWaiting:   make(map[string][]string),
+		workerOnline:    make(map[string]bool),
 	}, nil
 }
 
@@ -65,6 +67,13 @@ func NewEngineWithTopology(
 	}
 
 	engine.router = router
+
+	for _, node := range topology.Nodes {
+		if node.Type == NodeWorker {
+			engine.workerOnline[node.ID] = true
+		}
+	}
+
 	return engine, nil
 }
 
@@ -126,6 +135,48 @@ func (e *Engine) ScheduleRoutedArrival(requestID, sourceNode string, at Tick) er
 	}
 
 	return e.scheduleArrival(requestID, at, sourceNode)
+}
+
+// ScheduleWorkerFailure schedules a worker to become unavailable at a virtual tick.
+func (e *Engine) ScheduleWorkerFailure(workerID string, at Tick) error {
+	return e.scheduleWorkerEvent(workerID, at, EventWorkerFails)
+}
+
+// ScheduleWorkerRecovery schedules a worker to become available at a virtual tick.
+func (e *Engine) ScheduleWorkerRecovery(workerID string, at Tick) error {
+	return e.scheduleWorkerEvent(workerID, at, EventWorkerRecovers)
+}
+
+func (e *Engine) scheduleWorkerEvent(workerID string, at Tick, eventType EventType) error {
+	if e.router == nil {
+		return fmt.Errorf("engine has no topology configured")
+	}
+
+	if strings.TrimSpace(workerID) == "" {
+		return fmt.Errorf("worker ID must not be empty")
+	}
+
+	node, exists := e.router.nodes[workerID]
+	if !exists {
+		return fmt.Errorf("unknown worker %q", workerID)
+	}
+	if node.Type != NodeWorker {
+		return fmt.Errorf("node %q is not a worker", workerID)
+	}
+
+	if at < e.now {
+		return fmt.Errorf(
+			"worker event tick %d precedes current tick %d",
+			at,
+			e.now,
+		)
+	}
+
+	return e.schedule(Event{
+		At:     at,
+		Type:   eventType,
+		NodeID: workerID,
+	})
 }
 
 // ScheduleTimeout schedules an absolute deadline for an existing request.
@@ -218,6 +269,14 @@ func (e *Engine) Run() error {
 			}
 		case EventRequestCancel:
 			if err := e.handleCancel(event.RequestID); err != nil {
+				return err
+			}
+		case EventWorkerFails:
+			if err := e.handleWorkerFailure(event.NodeID); err != nil {
+				return err
+			}
+		case EventWorkerRecovers:
+			if err := e.handleWorkerRecovery(event.NodeID); err != nil {
 				return err
 			}
 		default:
@@ -334,6 +393,11 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 	}
 
 	if node.Type == NodeWorker {
+		if !e.workerOnline[nodeID] {
+			e.workerWaiting[nodeID] = append(e.workerWaiting[nodeID], requestID)
+			e.requestNodes[requestID] = nodeID
+			return nil
+		}
 		capacity, err := e.workerCapacity(nodeID)
 		if err != nil {
 			return err
@@ -348,7 +412,13 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		return e.startWorkerService(request, nodeID)
 	}
 
-	next, latency, err := e.router.NextHopWithLatency(nodeID)
+	next, latency, err := e.router.NextHopWithLatencyFiltered(
+		nodeID,
+		func(destination Node) bool {
+			return destination.Type != NodeWorker ||
+				e.workerOnline[destination.ID]
+		},
+	)
 	if err != nil {
 		return e.failQueuedRequest(request, err.Error())
 	}
@@ -604,7 +674,7 @@ func (e *Engine) handleTerminalRequest(requestID string, terminalState RequestSt
 			e.workerBusy[workerID]--
 
 			waiting := e.workerWaiting[workerID]
-			if len(waiting) > 0 {
+			if e.workerOnline[workerID] && len(waiting) > 0 {
 				nextID := waiting[0]
 				nextRequest, found := e.requests[nextID]
 				if !found {
@@ -661,4 +731,111 @@ func (e *Engine) workerCapacity(workerID string) (int, error) {
 	}
 
 	return e.serviceCapacity, nil
+}
+
+func (e *Engine) handleWorkerFailure(workerID string) error {
+	if e.router == nil {
+		return fmt.Errorf("worker failure encountered without a configured router")
+	}
+
+	node, exists := e.router.nodes[workerID]
+	if !exists || node.Type != NodeWorker {
+		return fmt.Errorf("worker failure references invalid worker %q", workerID)
+	}
+
+	// Repeated failure events are idempotent.
+	if !e.workerOnline[workerID] {
+		return nil
+	}
+	e.workerOnline[workerID] = false
+
+	// Fail all requests currently in flight on this worker.
+	// The eventual completion events will be ignored because these
+	// requests are terminal.
+	for requestID, request := range e.requests {
+		if request.State() != RequestInFlight {
+			continue
+		}
+		if e.requestNodes[requestID] != workerID {
+			continue
+		}
+
+		if err := request.Transition(
+			RequestFailed,
+			e.now,
+			fmt.Sprintf("worker %q failed", workerID),
+		); err != nil {
+			return err
+		}
+
+		e.workerBusy[workerID]--
+		e.busyWorkers--
+		delete(e.requestNodes, requestID)
+		delete(e.visitedNodes, requestID)
+	}
+
+	if e.workerBusy[workerID] != 0 {
+		return fmt.Errorf(
+			"worker %q has %d active requests after failure",
+			workerID,
+			e.workerBusy[workerID],
+		)
+	}
+
+	// Keep the waiting queue intact. Requests resume in FIFO order
+	// when this worker recovers.
+	return nil
+}
+
+func (e *Engine) handleWorkerRecovery(workerID string) error {
+	if e.router == nil {
+		return fmt.Errorf("worker recovery encountered without a configured router")
+	}
+
+	node, exists := e.router.nodes[workerID]
+	if !exists || node.Type != NodeWorker {
+		return fmt.Errorf("worker recovery references invalid worker %q", workerID)
+	}
+
+	// Repeated recovery events are idempotent.
+	if e.workerOnline[workerID] {
+		return nil
+	}
+	e.workerOnline[workerID] = true
+
+	capacity, err := e.workerCapacity(workerID)
+	if err != nil {
+		return err
+	}
+
+	// Restart queued requests in FIFO order, up to worker capacity.
+	for e.workerBusy[workerID] < capacity &&
+		len(e.workerWaiting[workerID]) > 0 {
+		waiting := e.workerWaiting[workerID]
+		requestID := waiting[0]
+
+		request, found := e.requests[requestID]
+		if !found {
+			return fmt.Errorf(
+				"worker %q waiting queue references unknown request %q",
+				workerID,
+				requestID,
+			)
+		}
+		if request.State() != RequestQueued {
+			return fmt.Errorf(
+				"worker %q waiting request %q is not queued",
+				workerID,
+				requestID,
+			)
+		}
+
+		if err := e.startWorkerService(request, workerID); err != nil {
+			return err
+		}
+
+		e.workerWaiting[workerID] = waiting[1:]
+	}
+
+	return nil
 }

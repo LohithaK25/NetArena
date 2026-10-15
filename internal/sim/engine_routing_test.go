@@ -597,3 +597,288 @@ func TestMetricsReportEffectiveTopologyWorkerCapacity(t *testing.T) {
 		}
 	}
 }
+
+func TestScheduleWorkerEvents(t *testing.T) {
+	engine, err := NewEngineWithTopology(1, 2, routingTestTopology())
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "schedule worker failure",
+			call: func() error {
+				return engine.ScheduleWorkerFailure("worker", 5)
+			},
+		},
+		{
+			name: "schedule worker recovery",
+			call: func() error {
+				return engine.ScheduleWorkerRecovery("worker", 10)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); err != nil {
+				t.Fatalf("scheduling worker event failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestScheduleWorkerEventValidation(t *testing.T) {
+	plainEngine, err := NewEngine(1, 2)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	topologyEngine, err := NewEngineWithTopology(1, 2, routingTestTopology())
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "failure without topology",
+			call: func() error {
+				return plainEngine.ScheduleWorkerFailure("worker", 1)
+			},
+		},
+		{
+			name: "recovery without topology",
+			call: func() error {
+				return plainEngine.ScheduleWorkerRecovery("worker", 1)
+			},
+		},
+		{
+			name: "empty worker ID",
+			call: func() error {
+				return topologyEngine.ScheduleWorkerFailure("", 1)
+			},
+		},
+		{
+			name: "unknown worker",
+			call: func() error {
+				return topologyEngine.ScheduleWorkerFailure("missing-worker", 1)
+			},
+		},
+		{
+			name: "non-worker node",
+			call: func() error {
+				return topologyEngine.ScheduleWorkerFailure("client", 1)
+			},
+		},
+		{
+			name: "failure scheduled in the past",
+			call: func() error {
+				if err := topologyEngine.ScheduleWorkerFailure("worker", 5); err != nil {
+					return err
+				}
+				if err := topologyEngine.Run(); err != nil {
+					return err
+				}
+				return topologyEngine.ScheduleWorkerFailure("worker", 4)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+		})
+	}
+}
+
+func TestWorkerFailureFailsInFlightRequestAndIgnoresStaleCompletion(t *testing.T) {
+	engine, err := NewEngineWithTopology(1, 10, routingTestTopology())
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-fail", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 5); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-fail"]
+	if request.State() != RequestFailed {
+		t.Fatalf("request state = %s, want failed", request.State())
+	}
+	if request.FailureReason() != `worker "worker" failed` {
+		t.Errorf("failure reason = %q", request.FailureReason())
+	}
+	if finishedAt, ok := request.FinishedAt(); !ok || finishedAt != 5 {
+		t.Errorf("FinishedAt() = (%d, %v), want (5, true)", finishedAt, ok)
+	}
+
+	metrics := engine.Metrics()
+	if metrics.InFlightRequests != 0 || metrics.FailedRequests != 1 {
+		t.Errorf("unexpected lifecycle metrics: %+v", metrics)
+	}
+	if metrics.BusyWorkers != 0 || metrics.Workers["worker"].BusyWorkers != 0 {
+		t.Errorf("worker capacity was not released: %+v", metrics)
+	}
+}
+
+func TestWorkerRecoveryResumesQueuedRequestsInFIFOOrder(t *testing.T) {
+	engine, err := NewEngineWithTopology(1, 10, routingTestTopology())
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	// The first request occupies the worker until tick 10.
+	// The second request queues behind it.
+	if err := engine.ScheduleRoutedArrival("req-1", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleRoutedArrival("req-2", "client", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleRoutedArrival("req-3", "client", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	if requests["req-1"].State() != RequestFailed {
+		t.Errorf("req-1 state = %s, want failed", requests["req-1"].State())
+	}
+
+	for _, id := range []string{"req-2", "req-3"} {
+		if requests[id].State() != RequestSucceeded {
+			t.Errorf("%s state = %s, want succeeded", id, requests[id].State())
+		}
+	}
+
+	started2, ok2 := requests["req-2"].StartedAt()
+	started3, ok3 := requests["req-3"].StartedAt()
+	if !ok2 || !ok3 {
+		t.Fatal("expected both queued requests to have start ticks")
+	}
+	if started2 != 8 {
+		t.Errorf("req-2 started at %d, want 8", started2)
+	}
+	if started3 != 18 {
+		t.Errorf("req-3 started at %d, want 18", started3)
+	}
+
+	metrics := engine.Metrics()
+	if metrics.BusyWorkers != 0 || metrics.Workers["worker"].WaitingRequests != 0 {
+		t.Errorf("worker did not drain after recovery: %+v", metrics)
+	}
+}
+
+func TestWorkerMetricsReflectFailureAndRecovery(t *testing.T) {
+	engine, err := NewEngineWithTopology(1, 2, routingTestTopology())
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 6); err != nil {
+		t.Fatal(err)
+	}
+
+	// Process the failure event first, without running later events.
+	event, ok := engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected a scheduled failure event")
+	}
+	engine.now = event.At
+	if event.Type != EventWorkerFails {
+		t.Fatalf("first event type = %s, want worker_fails", event.Type)
+	}
+	if err := engine.handleWorkerFailure(event.NodeID); err != nil {
+		t.Fatalf("handleWorkerFailure() error = %v", err)
+	}
+
+	metrics := engine.Metrics()
+	if metrics.Workers["worker"].Online {
+		t.Fatal("worker should be offline after failure")
+	}
+
+	event, ok = engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected a scheduled recovery event")
+	}
+	engine.now = event.At
+	if event.Type != EventWorkerRecovers {
+		t.Fatalf("next event type = %s, want worker_recovers", event.Type)
+	}
+	if err := engine.handleWorkerRecovery(event.NodeID); err != nil {
+		t.Fatalf("handleWorkerRecovery() error = %v", err)
+	}
+
+	metrics = engine.Metrics()
+	if !metrics.Workers["worker"].Online {
+		t.Fatal("worker should be online after recovery")
+	}
+}
+
+func TestRequestArrivingAtFailedWorkerWaitsForRecovery(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 5},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 2, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-1", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-1"]
+	if request.State() != RequestSucceeded {
+		t.Fatalf("request state = %s, want succeeded", request.State())
+	}
+
+	startedAt, ok := request.StartedAt()
+	if !ok || startedAt != 8 {
+		t.Errorf("StartedAt() = (%d, %v), want (8, true)", startedAt, ok)
+	}
+}

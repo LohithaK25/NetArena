@@ -112,35 +112,32 @@ func TestEventQueuePrioritizesTimeoutBeforeCompletion(t *testing.T) {
 
 	events := []Event{
 		{
-			At:        3,
-			Sequence:  1,
-			Type:      EventServiceCompletes,
-			RequestID: "req-a",
+			At: 3, Sequence: 1,
+			Type: EventServiceCompletes, RequestID: "req-a",
 		},
 		{
-			At:        3,
-			Sequence:  2,
-			Type:      EventRequestTimeout,
-			RequestID: "req-a",
+			At: 3, Sequence: 2,
+			Type: EventRequestTimeout, RequestID: "req-a",
 		},
 		{
-			At:        3,
-			Sequence:  3,
-			Type:      EventRequestCancel,
-			RequestID: "req-a",
+			At: 3, Sequence: 3,
+			Type: EventRequestCancel, RequestID: "req-a",
 		},
 		{
-			At:        3,
-			Sequence:  4,
-			Type:      EventRequestArrives,
-			RequestID: "req-b",
+			At: 3, Sequence: 4,
+			Type: EventRequestArrives, RequestID: "req-b",
 		},
 		{
-			At:        3,
-			Sequence:  5,
-			Type:      EventRouteHop,
-			RequestID: "req-c",
-			NodeID:    "node-a",
+			At: 3, Sequence: 5,
+			Type: EventRouteHop, RequestID: "req-c", NodeID: "node-a",
+		},
+		{
+			At: 3, Sequence: 6,
+			Type: EventWorkerFails, NodeID: "worker-a",
+		},
+		{
+			At: 3, Sequence: 7,
+			Type: EventWorkerRecovers, NodeID: "worker-a",
 		},
 	}
 
@@ -150,9 +147,12 @@ func TestEventQueuePrioritizesTimeoutBeforeCompletion(t *testing.T) {
 		}
 	}
 
-	// At the same tick, arrivals precede timeouts, which precede
-	// cancellations, service completions, and route hops.
-	want := []Event{events[3], events[1], events[2], events[0], events[4]}
+	// At the same tick, arrivals, timeouts, and cancellations precede
+	// worker failure and recovery, service completion, and route hops.
+	want := []Event{
+		events[3], events[1], events[2],
+		events[5], events[6], events[0], events[4],
+	}
 
 	for i, expected := range want {
 		got, ok := queue.Pop()

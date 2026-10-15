@@ -6,6 +6,7 @@ type WorkerMetrics struct {
 	BusyWorkers     int
 	WaitingRequests int
 	Utilization     float64
+	Online          bool
 }
 
 // Metrics is a read-only snapshot of the simulation's current state.
@@ -78,6 +79,7 @@ func (e *Engine) Metrics() Metrics {
 				Capacity:        capacity,
 				BusyWorkers:     busy,
 				WaitingRequests: waiting,
+				Online:          e.workerOnline[workerID],
 			}
 			if capacity > 0 {
 				worker.Utilization = float64(busy) / float64(capacity)

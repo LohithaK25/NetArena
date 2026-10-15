@@ -77,3 +77,43 @@ func (r *Router) NextHopWithLatency(from string) (Node, Tick, error) {
 
 	return node, link.latency, nil
 }
+
+// NextHopWithLatencyFiltered selects the next eligible destination using
+// deterministic round-robin routing. The availability callback determines
+// whether a destination can receive a request.
+func (r *Router) NextHopWithLatencyFiltered(
+	from string,
+	available func(Node) bool,
+) (Node, Tick, error) {
+	if _, exists := r.nodes[from]; !exists {
+		return Node{}, 0, fmt.Errorf("unknown source node %q", from)
+	}
+	if available == nil {
+		return Node{}, 0, fmt.Errorf("availability callback must not be nil")
+	}
+
+	links := r.outgoing[from]
+	if len(links) == 0 {
+		return Node{}, 0, fmt.Errorf("node %q has no outgoing connections", from)
+	}
+
+	start := r.cursors[from] % len(links)
+
+	for offset := 0; offset < len(links); offset++ {
+		index := (start + offset) % len(links)
+		link := links[index]
+
+		node, exists := r.nodes[link.to]
+		if !exists {
+			return Node{}, 0, fmt.Errorf("unknown destination node %q", link.to)
+		}
+		if !available(node) {
+			continue
+		}
+
+		r.cursors[from] = (index + 1) % len(links)
+		return node, link.latency, nil
+	}
+
+	return Node{}, 0, fmt.Errorf("node %q has no available outgoing destinations", from)
+}

@@ -92,3 +92,68 @@ func TestEventTypeString(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerEventTypeString(t *testing.T) {
+	tests := []struct {
+		eventType EventType
+		want      string
+	}{
+		{EventWorkerFails, "worker_fails"},
+		{EventWorkerRecovers, "worker_recovers"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := tt.eventType.String(); got != tt.want {
+				t.Fatalf("String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWorkerEventValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   Event
+		wantErr bool
+	}{
+		{
+			name: "worker failure requires node ID",
+			event: Event{
+				At: 1, Sequence: 1, Type: EventWorkerFails,
+			},
+			wantErr: true,
+		},
+		{
+			name: "worker recovery requires node ID",
+			event: Event{
+				At: 1, Sequence: 1, Type: EventWorkerRecovers,
+			},
+			wantErr: true,
+		},
+		{
+			name: "worker failure with node ID",
+			event: Event{
+				At: 1, Sequence: 1, Type: EventWorkerFails, NodeID: "worker-a",
+			},
+		},
+		{
+			name: "worker recovery with node ID",
+			event: Event{
+				At: 1, Sequence: 1, Type: EventWorkerRecovers, NodeID: "worker-a",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.event.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}

@@ -52,3 +52,15 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - A task is not complete merely because code exists; verification evidence is required.
 - Update this file and `docs/development/verification-log.md` when task status changes.
 - Keep future work scoped to the current milestone unless a dependency requires otherwise.
+
+## Phase 2.6 - Worker Failure Injection and Recovery
+- [x] Add deterministic worker failure and recovery events.
+- [x] Validate worker event scheduling and reject invalid worker targets and past timestamps.
+- [x] Fail in-flight requests when their worker fails and release active capacity.
+- [x] Preserve queued requests while a worker is offline.
+- [x] Resume queued requests in FIFO order when a worker recovers.
+- [x] Prevent new routing to offline workers and handle requests already in transit to failed workers.
+- [x] Expose worker online/offline state through worker metrics.
+- [x] Define deterministic event priority for worker failures and recovery.
+- [x] Test worker event validation, failure handling, stale completion events, recovery, routing, and worker metrics.
+- [x] Verify the implementation with tests, vet, build, and whitespace checks.
