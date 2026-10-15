@@ -217,3 +217,149 @@ func TestRoutedEngineRejectsArrivalWithoutSource(t *testing.T) {
 		t.Fatal("rejected request should not schedule an event")
 	}
 }
+
+func TestRoutedEngineUsesIndependentWorkerCapacities(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "lb", Type: NodeLoadBalancer},
+			{ID: "worker-a", Type: NodeWorker, Capacity: 1},
+			{ID: "worker-b", Type: NodeWorker, Capacity: 2},
+		},
+		Connections: []Connection{
+			{From: "client", To: "lb"},
+			{From: "lb", To: "worker-a"},
+			{From: "lb", To: "worker-b"},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(4, 3, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	for _, id := range []string{"req-1", "req-2", "req-3", "req-4"} {
+		if err := engine.ScheduleRoutedArrival(id, "client", 0); err != nil {
+			t.Fatalf("ScheduleRoutedArrival(%q): %v", id, err)
+		}
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := map[string]struct {
+		started  Tick
+		finished Tick
+	}{
+		"req-1": {started: 0, finished: 3},
+		"req-2": {started: 0, finished: 3},
+		"req-3": {started: 3, finished: 6},
+		"req-4": {started: 0, finished: 3},
+	}
+
+	for id, expected := range want {
+		request := engine.Requests()[id]
+		if request == nil {
+			t.Fatalf("request %q not found", id)
+		}
+
+		if request.State() != RequestSucceeded {
+			t.Errorf("%s state = %s, want succeeded", id, request.State())
+		}
+
+		started, hasStarted := request.StartedAt()
+		if !hasStarted || started != expected.started {
+			t.Errorf("%s start = (%d, %v), want (%d, true)",
+				id, started, hasStarted, expected.started)
+		}
+
+		finished, hasFinished := request.FinishedAt()
+		if !hasFinished || finished != expected.finished {
+			t.Errorf("%s finish = (%d, %v), want (%d, true)",
+				id, finished, hasFinished, expected.finished)
+		}
+	}
+
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+}
+
+func TestRoutedCompletionPreservesWaitingRequestWhenNextServiceCannotStart(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker"},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(2, 3, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	for _, id := range []string{"req-1", "req-2"} {
+		if err := engine.ScheduleRoutedArrival(id, "client", 0); err != nil {
+			t.Fatalf("ScheduleRoutedArrival(%q): %v", id, err)
+		}
+	}
+
+	// Process arrival and routing events until one request is active
+	// and the other is waiting at the worker.
+	for engine.workerBusy["worker"] == 0 ||
+		len(engine.workerWaiting["worker"]) == 0 {
+		event, ok := engine.queue.Pop()
+		if !ok {
+			t.Fatal("event queue emptied before both requests reached the worker")
+		}
+		engine.now = event.At
+
+		switch event.Type {
+		case EventRequestArrives:
+			if err := engine.handleArrival(event.RequestID); err != nil {
+				t.Fatalf("handleArrival(%q): %v", event.RequestID, err)
+			}
+		case EventRouteHop:
+			if err := engine.handleRouteHop(event.RequestID, event.NodeID); err != nil {
+				t.Fatalf("handleRouteHop(%q, %q): %v",
+					event.RequestID, event.NodeID, err)
+			}
+		default:
+			t.Fatalf("unexpected event type while preparing test: %s", event.Type)
+		}
+	}
+
+	// Preserve the completion event, then exhaust the sequence counter.
+	event, ok := engine.queue.Pop()
+	if !ok {
+		t.Fatal("expected a service completion event")
+	}
+	if event.Type != EventServiceCompletes {
+		t.Fatalf("event type = %s, want service completion", event.Type)
+	}
+
+	engine.now = event.At
+	engine.nextSequence = ^uint64(0)
+
+	err = engine.handleCompletion(event.RequestID, event.NodeID)
+
+	if got := engine.workerBusy["worker"]; got != 0 {
+		t.Errorf("workerBusy = %d, want 0", got)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+	if got := engine.workerWaiting["worker"]; len(got) != 1 || got[0] != "req-2" {
+		t.Errorf("worker waiting queue = %v, want [req-2]", got)
+	}
+	if got := engine.Requests()["req-1"].State(); got != RequestSucceeded {
+		t.Errorf("req-1 state = %s, want succeeded", got)
+	}
+	if got := engine.Requests()["req-2"].State(); got != RequestQueued {
+		t.Errorf("req-2 state = %s, want queued", got)
+	}
+}

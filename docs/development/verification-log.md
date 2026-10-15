@@ -124,3 +124,19 @@ The documented exact local commands and formatting instructions are in the READM
 - Verification: `go test ./...`, `go vet ./...`, `go build ./...`, and `git diff --check` all passed.
 - Limitation: all worker nodes currently share one global service-capacity pool; per-node capacity and network-hop latency are not implemented.
 - Note: Git emitted LF-to-CRLF warnings, which did not cause the checks to fail.
+
+
+## Phase 2.1 — Independent worker capacities
+
+- **Date:** 2026-10-15
+- **Scope:** Added configurable service capacity per worker node in the topology-aware simulation engine.
+- **Capacity rules:** A positive `Node.Capacity` specifies the worker's capacity. A capacity of zero uses the engine's default service capacity. Negative capacities and nonzero capacities on non-worker nodes are rejected.
+- **Scheduling:** Each worker maintains its own active-service count and FIFO waiting queue. Requests waiting for one worker do not consume another worker's capacity. The existing non-topology engine retains its shared service-capacity behavior.
+- **Completion handling:** Completion events identify the worker that handled the request. Worker identity and active-work counts are validated. If the next waiting request cannot start, the completed request remains succeeded, worker counters are released, and the next request remains queued.
+- **Tests:** Added independent-capacity coverage for workers with different capacities and a regression test for a failed completion handoff. The existing non-topology handoff regression test also remains passing.
+- **Targeted regression tests — passed:** `go test ./internal/sim -run 'TestRoutedCompletionPreservesWaitingRequestWhenNextServiceCannotStart|TestCompletionPreservesWaitingRequestWhenNextServiceCannotStart' -count=1 -v`.
+- **Standard tests — passed:** `go test ./...`.
+- **Vet — passed:** `go vet ./...`.
+- **Build — passed:** `go build ./...`.
+- **Whitespace check — passed:** `git diff --check`. Git emitted LF-to-CRLF warnings; these did not cause the check to fail.
+- **Remaining work:** Configurable network-hop latency. Race-detector verification remains blocked by the previously documented local compiler limitation; hosted CI remains unverified because no Git remote is configured.

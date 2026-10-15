@@ -19,6 +19,8 @@ type Engine struct {
 	router          *Router
 	requestNodes    map[string]string
 	visitedNodes    map[string]map[string]bool
+	workerBusy      map[string]int
+	workerWaiting   map[string][]string
 }
 
 // NewEngine creates an engine with a fixed service capacity and duration.
@@ -37,6 +39,8 @@ func NewEngine(serviceCapacity int, serviceDuration Tick) (*Engine, error) {
 		serviceDuration: serviceDuration,
 		requestNodes:    make(map[string]string),
 		visitedNodes:    make(map[string]map[string]bool),
+		workerBusy:      make(map[string]int),
+		workerWaiting:   make(map[string][]string),
 	}, nil
 }
 
@@ -147,7 +151,7 @@ func (e *Engine) Run() error {
 				return err
 			}
 		case EventServiceCompletes:
-			if err := e.handleCompletion(event.RequestID); err != nil {
+			if err := e.handleCompletion(event.RequestID, event.NodeID); err != nil {
 				return err
 			}
 		case EventRequestTimeout:
@@ -249,12 +253,18 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 	}
 
 	if node.Type == NodeWorker {
-		if e.busyWorkers >= e.serviceCapacity {
-			e.waiting = append(e.waiting, requestID)
+		capacity, err := e.workerCapacity(nodeID)
+		if err != nil {
+			return err
+		}
+
+		if e.workerBusy[nodeID] >= capacity {
+			e.workerWaiting[nodeID] = append(e.workerWaiting[nodeID], requestID)
 			e.requestNodes[requestID] = nodeID
 			return nil
 		}
-		return e.startService(request)
+
+		return e.startWorkerService(request, nodeID)
 	}
 
 	next, err := e.router.NextHop(nodeID)
@@ -321,7 +331,42 @@ func (e *Engine) startService(request *Request) error {
 	})
 }
 
-func (e *Engine) handleCompletion(requestID string) error {
+func (e *Engine) startWorkerService(request *Request, workerID string) error {
+	capacity, err := e.workerCapacity(workerID)
+	if err != nil {
+		return err
+	}
+	if e.workerBusy[workerID] >= capacity {
+		return fmt.Errorf("worker %q capacity exceeded", workerID)
+	}
+	if e.now > Tick(math.MaxInt64)-e.serviceDuration {
+		return fmt.Errorf("service completion tick overflow")
+	}
+	if e.nextSequence == math.MaxUint64 {
+		return fmt.Errorf("event sequence exhausted")
+	}
+	if err := request.Transition(RequestInFlight, e.now, ""); err != nil {
+		return err
+	}
+
+	e.workerBusy[workerID]++
+	e.busyWorkers++
+
+	if err := e.schedule(Event{
+		At:        e.now + e.serviceDuration,
+		Type:      EventServiceCompletes,
+		RequestID: request.ID(),
+		NodeID:    workerID,
+	}); err != nil {
+		e.workerBusy[workerID]--
+		e.busyWorkers--
+		return err
+	}
+
+	return nil
+}
+
+func (e *Engine) handleCompletion(requestID, workerID string) error {
 	request, exists := e.requests[requestID]
 	if !exists {
 		return fmt.Errorf("completion references unknown request %q", requestID)
@@ -330,37 +375,88 @@ func (e *Engine) handleCompletion(requestID string) error {
 		return fmt.Errorf("completion encountered with no busy workers")
 	}
 
+	if e.router == nil {
+		if err := request.Transition(RequestSucceeded, e.now, ""); err != nil {
+			return err
+		}
+
+		e.busyWorkers--
+
+		if len(e.waiting) > 0 {
+			nextID := e.waiting[0]
+			nextRequest, exists := e.requests[nextID]
+			if !exists {
+				return fmt.Errorf("waiting queue references unknown request %q", nextID)
+			}
+			if err := e.startService(nextRequest); err != nil {
+				return err
+			}
+			e.waiting = e.waiting[1:]
+		}
+		return nil
+	}
+
+	recordedWorker := e.requestNodes[requestID]
+	if workerID == "" || recordedWorker != workerID {
+		return fmt.Errorf("completion worker mismatch for request %q", requestID)
+	}
+	if e.workerBusy[workerID] <= 0 {
+		return fmt.Errorf("worker %q completed a request with no active work", workerID)
+	}
+
+	waiting := e.workerWaiting[workerID]
+	var nextRequest *Request
+
+	if len(waiting) > 0 {
+		nextID := waiting[0]
+		var found bool
+		nextRequest, found = e.requests[nextID]
+		if !found {
+			return fmt.Errorf("worker %q waiting queue references unknown request %q",
+				workerID, nextID)
+		}
+		if nextRequest.State() != RequestQueued {
+			return fmt.Errorf("worker %q waiting request %q is not queued",
+				workerID, nextID)
+		}
+	}
+
+	// The current service has completed. Release its worker slot even
+	// if the next request cannot be scheduled.
 	if err := request.Transition(RequestSucceeded, e.now, ""); err != nil {
 		return err
 	}
 
+	e.workerBusy[workerID]--
 	e.busyWorkers--
 	delete(e.requestNodes, requestID)
 	delete(e.visitedNodes, requestID)
 
-	if len(e.waiting) > 0 {
-		nextID := e.waiting[0]
-
-		nextRequest, exists := e.requests[nextID]
-		if !exists {
-			return fmt.Errorf("waiting queue references unknown request %q", nextID)
+	if nextRequest != nil {
+		if err := e.startWorkerService(nextRequest, workerID); err != nil {
+			return err
 		}
-
-		if e.router != nil {
-			if _, exists := e.requestNodes[nextID]; !exists {
-				return fmt.Errorf("routed waiting request %q has no worker node", nextID)
-			}
-			if err := e.startService(nextRequest); err != nil {
-				return err
-			}
-		} else {
-			if err := e.startService(nextRequest); err != nil {
-				return err
-			}
-		}
-
-		e.waiting = e.waiting[1:]
+		e.workerWaiting[workerID] = e.workerWaiting[workerID][1:]
 	}
 
 	return nil
+}
+
+func (e *Engine) workerCapacity(workerID string) (int, error) {
+	if e.router == nil {
+		return e.serviceCapacity, nil
+	}
+
+	node, exists := e.router.nodes[workerID]
+	if !exists {
+		return 0, fmt.Errorf("unknown worker node %q", workerID)
+	}
+	if node.Type != NodeWorker {
+		return 0, fmt.Errorf("node %q is not a worker", workerID)
+	}
+	if node.Capacity > 0 {
+		return node.Capacity, nil
+	}
+
+	return e.serviceCapacity, nil
 }

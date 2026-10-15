@@ -117,3 +117,15 @@ func TestNodeTypeString(t *testing.T) {
 		}
 	}
 }
+
+func TestTopologyRejectsNegativeWorkerCapacity(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "worker", Type: NodeWorker, Capacity: -1},
+		},
+	}
+
+	if err := topology.Validate(); err == nil {
+		t.Fatal("Validate() accepted a negative worker capacity")
+	}
+}

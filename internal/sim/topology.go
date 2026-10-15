@@ -30,9 +30,10 @@ func (t NodeType) String() string {
 
 // Node describes one component in a simulated infrastructure topology.
 type Node struct {
-	ID   string
-	Type NodeType
-	Name string
+	ID       string
+	Type     NodeType
+	Name     string
+	Capacity int
 }
 
 // Connection is a directed link between two topology nodes.
@@ -60,6 +61,12 @@ func (t Topology) Validate() error {
 		}
 		if node.Type < NodeClient || node.Type > NodeWorker {
 			return fmt.Errorf("node %q has invalid type %d", node.ID, node.Type)
+		}
+		if node.Capacity < 0 {
+			return fmt.Errorf("node %q has negative capacity", node.ID)
+		}
+		if node.Type != NodeWorker && node.Capacity != 0 {
+			return fmt.Errorf("only worker nodes may define capacity: %q", node.ID)
 		}
 		nodes[node.ID] = node
 	}

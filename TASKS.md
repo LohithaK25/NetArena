@@ -32,9 +32,10 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Integrate topology-aware request routing into the simulation engine.
 - [x] Handle routing dead ends and cycles.
 - [x] Test FIFO waiting under shared worker-capacity constraints.
-- [ ] Model independent capacity for each worker node.
+- [x] Model independent capacity for each worker node.
 - [ ] Add configurable network-hop latency.
-- [ ] Add routing tests for multiple worker nodes and round-robin distribution.
+- [x] Add routing tests for multiple worker nodes and round-robin distribution.
+- [x] Test worker-local FIFO queues and completion handoff failure handling.
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.
 - Update this file and `docs/development/verification-log.md` when task status changes.
