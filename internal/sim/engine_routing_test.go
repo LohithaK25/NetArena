@@ -548,3 +548,52 @@ func TestRoutedQueuedRequestCanBeCancelledAndPreservesWorkerQueue(t *testing.T) 
 		t.Errorf("worker waiting queue = %v, want empty", engine.workerWaiting["worker"])
 	}
 }
+
+func TestMetricsReportEffectiveTopologyWorkerCapacity(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker-a", Type: NodeWorker, Capacity: 1},
+			{ID: "worker-b", Type: NodeWorker, Capacity: 2},
+			{ID: "worker-c", Type: NodeWorker},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(3, 2, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	got := engine.Metrics()
+
+	if got.ServiceCapacity != 6 {
+		t.Errorf("ServiceCapacity = %d, want 6", got.ServiceCapacity)
+	}
+	if got.WorkerUtilization != 0 {
+		t.Errorf("WorkerUtilization = %v, want 0", got.WorkerUtilization)
+	}
+	if len(got.Workers) != 3 {
+		t.Fatalf("Workers contains %d entries, want 3", len(got.Workers))
+	}
+
+	wantCapacities := map[string]int{
+		"worker-a": 1,
+		"worker-b": 2,
+		"worker-c": 3,
+	}
+	for workerID, wantCapacity := range wantCapacities {
+		worker, ok := got.Workers[workerID]
+		if !ok {
+			t.Errorf("Workers missing %q", workerID)
+			continue
+		}
+		if worker.Capacity != wantCapacity {
+			t.Errorf("%s capacity = %d, want %d",
+				workerID, worker.Capacity, wantCapacity)
+		}
+		if worker.BusyWorkers != 0 || worker.WaitingRequests != 0 {
+			t.Errorf("%s metrics = %+v, want no busy or waiting work",
+				workerID, worker)
+		}
+	}
+}

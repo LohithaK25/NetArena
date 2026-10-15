@@ -228,12 +228,12 @@ func (e *Engine) Run() error {
 	return nil
 }
 
-// Requests returns a snapshot of the request registry.
-// Request objects remain owned by the engine.
+// Requests returns independent snapshots of the request registry.
+// Mutating a returned Request does not change engine-owned state.
 func (e *Engine) Requests() map[string]*Request {
 	snapshot := make(map[string]*Request, len(e.requests))
 	for id, request := range e.requests {
-		snapshot[id] = request
+		snapshot[id] = request.clone()
 	}
 	return snapshot
 }

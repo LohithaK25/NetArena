@@ -187,3 +187,24 @@ The documented exact local commands and formatting instructions are in the READM
 ### Limitations
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI has not been run because no Git remote is configured.
+
+## Phase 2.5 — Simulation Metrics and Request Snapshots
+
+**Date:** 2026-10-15
+
+### Implemented
+- Added read-only metrics for total, created, queued, in-flight, succeeded, failed, cancelled, and timed-out requests.
+- Added aggregate service-capacity, busy-worker, waiting-request, and utilization metrics.
+- Added per-worker metrics for topology-based simulations, including effective capacity, busy workers, waiting requests, and utilization.
+- Made `Engine.Requests()` return independent request snapshots so callers cannot mutate engine-owned request lifecycle state through returned pointers.
+- Added tests covering request lifecycle metrics, timeouts, cancellations, effective worker capacity, and snapshot independence.
+
+### Verification
+- `go test ./...` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed; Git emitted only Windows LF/CRLF conversion warnings.
+
+### Limitations
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI has not been run because no Git remote is configured.

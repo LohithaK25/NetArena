@@ -44,6 +44,10 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Cancel queued and in-flight requests with correct queue and capacity cleanup.
 - [x] Define deterministic cancellation priority for events at the same tick.
 - [x] Test cancellation validation, routed queues, and same-tick event ordering.
+- [x] Add read-only request lifecycle and service-capacity metrics.
+- [x] Report effective per-worker capacity, queue depth, and utilization for routed simulations.
+- [x] Return independent request snapshots to prevent external mutation of engine-owned request state.
+- [x] Test lifecycle metrics for success, timeout, cancellation, and topology worker capacity.
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.
 - Update this file and `docs/development/verification-log.md` when task status changes.

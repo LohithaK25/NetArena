@@ -1134,3 +1134,123 @@ func TestScheduleCancelRejectsTerminalRequest(t *testing.T) {
 		t.Fatal("ScheduleCancel() accepted a terminal request")
 	}
 }
+
+func TestMetricsReflectRequestLifecycleAndCapacity(t *testing.T) {
+	engine, err := NewEngine(1, 5)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-1", 0); err != nil {
+		t.Fatalf("ScheduleArrival(req-1): %v", err)
+	}
+	if err := engine.ScheduleArrival("req-2", 0); err != nil {
+		t.Fatalf("ScheduleArrival(req-2): %v", err)
+	}
+
+	// Before the simulation runs, both requests are created.
+	got := engine.Metrics()
+	if got.TotalRequests != 2 ||
+		got.CreatedRequests != 2 ||
+		got.QueuedRequests != 0 ||
+		got.InFlightRequests != 0 ||
+		got.BusyWorkers != 0 ||
+		got.ServiceCapacity != 1 ||
+		got.WaitingRequests != 0 ||
+		got.WorkerUtilization != 0 {
+		t.Fatalf("Metrics() before Run() = %+v, want 2 created requests and no active work", got)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+
+	got = engine.Metrics()
+	if got.TotalRequests != 2 ||
+		got.CreatedRequests != 0 ||
+		got.QueuedRequests != 0 ||
+		got.InFlightRequests != 0 ||
+		got.SucceededRequests != 2 ||
+		got.FailedRequests != 0 ||
+		got.CancelledRequests != 0 ||
+		got.TimedOutRequests != 0 ||
+		got.BusyWorkers != 0 ||
+		got.WaitingRequests != 0 ||
+		got.WorkerUtilization != 0 {
+		t.Fatalf("Metrics() after Run() = %+v, want 2 successes and no active or waiting work", got)
+	}
+}
+
+func TestMetricsCountTimeoutsAndCancellations(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-timeout", 0); err != nil {
+		t.Fatalf("ScheduleArrival(req-timeout): %v", err)
+	}
+	if err := engine.ScheduleTimeout("req-timeout", 2); err != nil {
+		t.Fatalf("ScheduleTimeout(req-timeout): %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-cancel", 3); err != nil {
+		t.Fatalf("ScheduleArrival(req-cancel): %v", err)
+	}
+	if err := engine.ScheduleCancel("req-cancel", 4); err != nil {
+		t.Fatalf("ScheduleCancel(req-cancel): %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+
+	got := engine.Metrics()
+	if got.TotalRequests != 2 ||
+		got.TimedOutRequests != 1 ||
+		got.CancelledRequests != 1 ||
+		got.SucceededRequests != 0 ||
+		got.FailedRequests != 0 ||
+		got.CreatedRequests != 0 ||
+		got.QueuedRequests != 0 ||
+		got.InFlightRequests != 0 ||
+		got.BusyWorkers != 0 ||
+		got.WaitingRequests != 0 ||
+		got.WorkerUtilization != 0 {
+		t.Fatalf("Metrics() = %+v, want one timeout, one cancellation, and no active work", got)
+	}
+}
+
+func TestRequestsReturnsIndependentSnapshots(t *testing.T) {
+	engine, err := NewEngine(1, 5)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-snapshot", 0); err != nil {
+		t.Fatalf("ScheduleArrival(): %v", err)
+	}
+
+	snapshots := engine.Requests()
+	snapshot := snapshots["req-snapshot"]
+	if snapshot == nil {
+		t.Fatal("Requests() did not return the scheduled request")
+	}
+
+	// Mutate the returned copy. The engine's request must remain unchanged.
+	if err := snapshot.Transition(RequestCancelled, 0, ""); err != nil {
+		t.Fatalf("Transition() on snapshot: %v", err)
+	}
+
+	if got := engine.Requests()["req-snapshot"].State(); got != RequestCreated {
+		t.Fatalf("engine request state = %s, want created", got)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+
+	if got := engine.Requests()["req-snapshot"].State(); got != RequestSucceeded {
+		t.Fatalf("engine request state after Run() = %s, want succeeded", got)
+	}
+}

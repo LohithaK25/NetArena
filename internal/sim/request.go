@@ -186,3 +186,9 @@ func canTransition(current, next RequestState) bool {
 		return false
 	}
 }
+
+// clone returns an independent copy of the request lifecycle record.
+func (r *Request) clone() *Request {
+	snapshot := *r
+	return &snapshot
+}
