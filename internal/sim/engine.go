@@ -8,25 +8,28 @@ import (
 
 // Engine runs a deterministic, discrete-event service simulation.
 type Engine struct {
-	queue           *EventQueue
-	requests        map[string]*Request
-	now             Tick
-	nextSequence    uint64
-	serviceCapacity int
-	serviceDuration Tick
-	busyWorkers     int
-	waiting         []string
-	router          *Router
-	requestNodes    map[string]string
-	requestSources  map[string]string
-	visitedNodes    map[string]map[string]bool
-	workerBusy      map[string]int
-	workerWaiting   map[string][]string
-	workerOnline    map[string]bool
-	retryPolicy     RetryPolicy
-	retryCounts     map[string]int
-	attemptIDs      map[string]uint64
-	retryWorkers    map[string]string
+	queue                 *EventQueue
+	requests              map[string]*Request
+	now                   Tick
+	nextSequence          uint64
+	serviceCapacity       int
+	serviceDuration       Tick
+	busyWorkers           int
+	waiting               []string
+	router                *Router
+	requestNodes          map[string]string
+	requestSources        map[string]string
+	visitedNodes          map[string]map[string]bool
+	workerBusy            map[string]int
+	workerWaiting         map[string][]string
+	workerOnline          map[string]bool
+	retryPolicy           RetryPolicy
+	retryCounts           map[string]int
+	attemptIDs            map[string]uint64
+	retryWorkers          map[string]string
+	circuitBreakers       map[string]*circuitBreaker
+	circuitBreakerPolicy  CircuitBreakerPolicy
+	circuitBreakerEnabled bool
 }
 
 // NewEngine creates an engine with a fixed service capacity and duration.
@@ -52,6 +55,7 @@ func NewEngine(serviceCapacity int, serviceDuration Tick) (*Engine, error) {
 		retryCounts:     make(map[string]int),
 		attemptIDs:      make(map[string]uint64),
 		retryWorkers:    make(map[string]string),
+		circuitBreakers: make(map[string]*circuitBreaker),
 	}, nil
 }
 
@@ -80,6 +84,9 @@ func NewEngineWithTopology(
 	for _, node := range topology.Nodes {
 		if node.Type == NodeWorker {
 			engine.workerOnline[node.ID] = true
+			engine.circuitBreakers[node.ID] = &circuitBreaker{
+				state: CircuitClosed,
+			}
 		}
 	}
 
@@ -289,6 +296,12 @@ func (e *Engine) Run() error {
 			if err := e.handleWorkerRecovery(event.NodeID); err != nil {
 				return err
 			}
+
+		case EventCircuitCooldownElapsed:
+			if err := e.handleCircuitCooldownElapsed(event.NodeID); err != nil {
+				return err
+			}
+
 		case EventRequestRetry:
 			if err := e.handleRequestRetry(event.RequestID); err != nil {
 				return err
@@ -412,6 +425,7 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 			e.requestNodes[requestID] = nodeID
 			return nil
 		}
+
 		capacity, err := e.workerCapacity(nodeID)
 		if err != nil {
 			return err
@@ -423,14 +437,25 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 			return nil
 		}
 
+		if !e.acquireCircuitProbe(nodeID, requestID) {
+			return e.failQueuedRequest(
+				request,
+				fmt.Sprintf("worker %q circuit is not accepting requests", nodeID),
+			)
+		}
+
 		return e.startWorkerService(request, nodeID)
 	}
 
 	next, latency, err := e.router.NextHopWithLatencyFiltered(
 		nodeID,
+
 		func(destination Node) bool {
-			return destination.Type != NodeWorker ||
-				e.workerOnline[destination.ID]
+			if destination.Type != NodeWorker {
+				return true
+			}
+			return e.workerOnline[destination.ID] &&
+				e.circuitAllowsRoute(destination.ID)
 		},
 	)
 	if err != nil {
@@ -609,7 +634,7 @@ func (e *Engine) handleCompletion(requestID, workerID string, attemptID uint64) 
 	if err := request.Transition(RequestSucceeded, e.now, ""); err != nil {
 		return err
 	}
-
+	e.recordCircuitSuccess(workerID, requestID)
 	e.workerBusy[workerID]--
 	e.busyWorkers--
 
@@ -617,6 +642,19 @@ func (e *Engine) handleCompletion(requestID, workerID string, attemptID uint64) 
 	delete(e.visitedNodes, requestID)
 
 	if nextRequest != nil {
+		breaker := e.circuitBreakers[workerID]
+
+		// Don't start queued work while the circuit is open or a
+		// half-open recovery probe is already in flight.
+		if e.circuitBreakerEnabled && breaker != nil {
+			if breaker.state == CircuitOpen && e.now >= breaker.openUntil {
+				return e.handleCircuitCooldownElapsed(workerID)
+			}
+			if breaker.state != CircuitClosed {
+				return nil
+			}
+		}
+
 		if err := e.startWorkerService(nextRequest, workerID); err != nil {
 			return err
 		}
@@ -699,7 +737,11 @@ func (e *Engine) handleTerminalRequest(requestID string, terminalState RequestSt
 			e.workerBusy[workerID]--
 
 			waiting := e.workerWaiting[workerID]
-			if e.workerOnline[workerID] && len(waiting) > 0 {
+			if e.workerOnline[workerID] &&
+				len(waiting) > 0 &&
+				(!e.circuitBreakerEnabled ||
+					e.circuitBreakers[workerID] == nil ||
+					e.circuitBreakers[workerID].state == CircuitClosed) {
 				nextID := waiting[0]
 				nextRequest, found := e.requests[nextID]
 				if !found {
@@ -720,6 +762,22 @@ func (e *Engine) handleTerminalRequest(requestID string, terminalState RequestSt
 					return err
 				}
 				e.workerWaiting[workerID] = waiting[1:]
+			}
+		}
+	}
+
+	if e.circuitBreakerEnabled {
+		for workerID, breaker := range e.circuitBreakers {
+			if breaker.probeRequestID != requestID {
+				continue
+			}
+
+			if breaker.state == CircuitHalfOpen {
+				if err := e.openCircuit(workerID, breaker); err != nil {
+					return err
+				}
+			} else {
+				breaker.probeRequestID = ""
 			}
 		}
 	}
@@ -772,6 +830,24 @@ func (e *Engine) handleWorkerFailure(workerID string) error {
 	if !e.workerOnline[workerID] {
 		return nil
 	}
+
+	// Count one failure for this worker outage.
+	if e.circuitBreakerEnabled {
+		breaker := e.circuitBreakers[workerID]
+		willOpen := breaker.state == CircuitHalfOpen ||
+			(breaker.state == CircuitClosed &&
+				breaker.consecutiveFailures+1 >= e.circuitBreakerPolicy.FailureThreshold)
+
+		if willOpen &&
+			e.now > Tick(math.MaxInt64)-e.circuitBreakerPolicy.OpenDuration {
+			return fmt.Errorf("circuit-breaker cooldown tick overflow for worker %q", workerID)
+		}
+
+		if err := e.recordCircuitFailure(workerID, breaker.probeRequestID); err != nil {
+			return err
+		}
+	}
+
 	e.workerOnline[workerID] = false
 
 	// Fail all requests currently in flight on this worker.
@@ -858,7 +934,22 @@ func (e *Engine) handleWorkerRecovery(workerID string) error {
 	}
 	e.workerOnline[workerID] = true
 
+	if e.circuitBreakerEnabled {
+		breaker := e.circuitBreakers[workerID]
+		if breaker != nil && breaker.state == CircuitOpen {
+			// Keep the worker idle until the cooldown expires.
+			if e.now < breaker.openUntil {
+				return nil
+			}
+
+			// If the cooldown has elapsed, let the cooldown handler
+			// resume queued work through the recovery-probe path.
+			return e.handleCircuitCooldownElapsed(workerID)
+		}
+	}
+
 	capacity, err := e.workerCapacity(workerID)
+
 	if err != nil {
 		return err
 	}
@@ -918,6 +1009,20 @@ func (e *Engine) SetRetryPolicy(policy RetryPolicy) error {
 	}
 
 	e.retryPolicy = policy
+	return nil
+}
+
+// SetCircuitBreakerPolicy configures circuit breakers for topology workers.
+func (e *Engine) SetCircuitBreakerPolicy(policy CircuitBreakerPolicy) error {
+	if e.router == nil {
+		return fmt.Errorf("circuit breakers require a configured topology")
+	}
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+
+	e.circuitBreakerPolicy = policy
+	e.circuitBreakerEnabled = true
 	return nil
 }
 

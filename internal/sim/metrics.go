@@ -2,11 +2,14 @@ package sim
 
 // WorkerMetrics is a read-only snapshot of one worker's capacity and queue.
 type WorkerMetrics struct {
-	Capacity        int
-	BusyWorkers     int
-	WaitingRequests int
-	Utilization     float64
-	Online          bool
+	Capacity            int
+	BusyWorkers         int
+	WaitingRequests     int
+	Utilization         float64
+	Online              bool
+	CircuitState        CircuitState
+	ConsecutiveFailures int
+	ProbeInFlight       bool
 }
 
 // Metrics is a read-only snapshot of the simulation's current state.
@@ -76,10 +79,13 @@ func (e *Engine) Metrics() Metrics {
 			waiting := len(e.workerWaiting[workerID])
 
 			worker := WorkerMetrics{
-				Capacity:        capacity,
-				BusyWorkers:     busy,
-				WaitingRequests: waiting,
-				Online:          e.workerOnline[workerID],
+				Capacity:            capacity,
+				BusyWorkers:         busy,
+				WaitingRequests:     waiting,
+				Online:              e.workerOnline[workerID],
+				CircuitState:        e.circuitBreakers[workerID].state,
+				ConsecutiveFailures: e.circuitBreakers[workerID].consecutiveFailures,
+				ProbeInFlight:       e.circuitBreakers[workerID].probeRequestID != "",
 			}
 			if capacity > 0 {
 				worker.Utilization = float64(busy) / float64(capacity)

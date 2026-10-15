@@ -236,3 +236,53 @@ The documented exact local commands and formatting instructions are in the READM
 - If all eligible outgoing destinations are unavailable, routing currently fails the request instead of waiting at the upstream node.
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.7 — Retry and Resilience Policies
+
+**Date:** 2026-10-15
+
+### Implemented
+- Added configurable retry budgets and backoff delays for eligible request failures.
+- Added retry-waiting lifecycle handling and deterministic retry events.
+- Retried topology-routed requests through their original source after the backoff expires.
+- Preserved retry behavior when the failed worker is offline, resuming retries when it becomes available.
+- Added attempt tracking to distinguish service attempts and handle stale completion events safely.
+- Covered retry success, exhausted retry budgets, zero backoff, offline-worker waiting, and cancellation during retry waiting.
+
+### Verification
+- Focused retry and worker-failure tests — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed.
+
+### Limitations
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.8 — Circuit Breakers and Failure Isolation
+
+**Date:** 2026-10-15
+
+### Implemented
+- Added configurable circuit-breaker policies with failure thresholds and cooldown durations.
+- Added closed, open, and half-open circuit states for topology workers.
+- Filtered routing to avoid offline workers and workers whose circuits are not accepting requests.
+- Restricted half-open recovery to one probe request at a time.
+- Reopened circuits when a probe is cancelled or times out, scheduling a new cooldown.
+- Resumed queued work through the probe path after cooldown expiry, including when expiry occurs while the worker is busy.
+- Added per-worker circuit state, consecutive-failure, and probe-in-flight metrics.
+- Added tests for policy validation, default metrics, threshold-triggered opening, single-probe behavior, probe termination, queued-request resumption, and cooldown expiry during active service.
+
+### Verification
+- Focused circuit-breaker, worker-recovery, and worker-failure tests — passed.
+- `go test ./internal/sim -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed; Git emitted only Windows LF-to-CRLF conversion warnings.
+
+### Limitations
+- If all eligible outgoing destinations are unavailable, routing currently fails the request instead of waiting at the upstream node.
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.

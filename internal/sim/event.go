@@ -14,6 +14,7 @@ const (
 	EventWorkerFails
 	EventWorkerRecovers
 	EventRequestRetry
+	EventCircuitCooldownElapsed
 )
 
 // String returns a readable event type name.
@@ -35,6 +36,8 @@ func (t EventType) String() string {
 		return "worker_recovers"
 	case EventRequestRetry:
 		return "request_retry"
+	case EventCircuitCooldownElapsed:
+		return "circuit_cooldown_elapsed"
 	default:
 		return "unknown"
 	}
@@ -60,11 +63,11 @@ func (e Event) Validate() error {
 	if e.Sequence == 0 {
 		return fmt.Errorf("event sequence must be positive")
 	}
-	if e.Type < EventRequestArrives || e.Type > EventRequestRetry {
+	if e.Type < EventRequestArrives || e.Type > EventCircuitCooldownElapsed {
 		return fmt.Errorf("invalid event type: %d", e.Type)
 	}
 	switch e.Type {
-	case EventWorkerFails, EventWorkerRecovers:
+	case EventWorkerFails, EventWorkerRecovers, EventCircuitCooldownElapsed:
 		if e.NodeID == "" {
 			return fmt.Errorf("worker event node ID must not be empty")
 		}
