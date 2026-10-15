@@ -158,6 +158,34 @@ func (e *Engine) ScheduleTimeout(requestID string, deadline Tick) error {
 	})
 }
 
+// ScheduleCancel schedules cancellation of a non-terminal request.
+func (e *Engine) ScheduleCancel(requestID string, at Tick) error {
+	if strings.TrimSpace(requestID) == "" {
+		return fmt.Errorf("request ID must not be empty")
+	}
+
+	request, exists := e.requests[requestID]
+	if !exists {
+		return fmt.Errorf("cannot schedule cancellation for unknown request %q", requestID)
+	}
+	if request.IsTerminal() {
+		return fmt.Errorf("cannot schedule cancellation for terminal request %q", requestID)
+	}
+	if at < e.now {
+		return fmt.Errorf(
+			"cancellation tick %d precedes current tick %d",
+			at,
+			e.now,
+		)
+	}
+
+	return e.schedule(Event{
+		At:        at,
+		Type:      EventRequestCancel,
+		RequestID: requestID,
+	})
+}
+
 // Run processes every currently scheduled event.
 func (e *Engine) Run() error {
 	for e.queue.Len() > 0 {
@@ -186,6 +214,10 @@ func (e *Engine) Run() error {
 			}
 		case EventRequestTimeout:
 			if err := e.handleTimeout(event.RequestID); err != nil {
+				return err
+			}
+		case EventRequestCancel:
+			if err := e.handleCancel(event.RequestID); err != nil {
 				return err
 			}
 		default:
@@ -240,7 +272,7 @@ func (e *Engine) handleArrival(requestID string) error {
 
 	if request.State() != RequestCreated {
 		switch request.State() {
-		case RequestSucceeded, RequestFailed, RequestTimedOut:
+		case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
 			return nil
 		default:
 			return fmt.Errorf(
@@ -282,7 +314,7 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		return fmt.Errorf("route hop references unknown request %q", requestID)
 	}
 	switch request.State() {
-	case RequestSucceeded, RequestFailed, RequestTimedOut:
+	case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
 		return nil
 	}
 	if e.router == nil {
@@ -425,7 +457,7 @@ func (e *Engine) handleCompletion(requestID, workerID string) error {
 		return fmt.Errorf("completion references unknown request %q", requestID)
 	}
 	switch request.State() {
-	case RequestSucceeded, RequestFailed, RequestTimedOut:
+	case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
 		return nil
 	}
 	if e.busyWorkers <= 0 {
@@ -498,18 +530,24 @@ func (e *Engine) handleCompletion(requestID, workerID string) error {
 
 	return nil
 }
-
 func (e *Engine) handleTimeout(requestID string) error {
+	return e.handleTerminalRequest(requestID, RequestTimedOut)
+}
+
+func (e *Engine) handleCancel(requestID string) error {
+	return e.handleTerminalRequest(requestID, RequestCancelled)
+}
+func (e *Engine) handleTerminalRequest(requestID string, terminalState RequestState) error {
 	request, exists := e.requests[requestID]
 	if !exists {
-		return fmt.Errorf("timeout references unknown request %q", requestID)
+		return fmt.Errorf("terminal event references unknown request %q", requestID)
 	}
 
 	state := request.State()
 
 	// Ignore stale timeout events for requests that are already terminal.
 	switch state {
-	case RequestSucceeded, RequestFailed, RequestTimedOut:
+	case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
 		return nil
 	}
 
@@ -517,7 +555,7 @@ func (e *Engine) handleTimeout(requestID string) error {
 	if state == RequestInFlight {
 		if e.router == nil {
 			if e.busyWorkers <= 0 {
-				return fmt.Errorf("timeout encountered with no busy workers")
+				return fmt.Errorf("terminal event encountered with no busy workers")
 			}
 		} else {
 			workerID = e.requestNodes[requestID]
@@ -542,7 +580,7 @@ func (e *Engine) handleTimeout(requestID string) error {
 		}
 	}
 
-	if err := request.Transition(RequestTimedOut, e.now, ""); err != nil {
+	if err := request.Transition(terminalState, e.now, ""); err != nil {
 		return err
 	}
 

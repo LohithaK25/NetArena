@@ -40,6 +40,10 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Ensure timeouts release active worker capacity and remove queued requests.
 - [x] Define deterministic timeout priority when events share a tick.
 - [x] Test stale events, same-tick completion races, and topology-aware waiting queues.
+- [x] Implement explicit request cancellation scheduling and events.
+- [x] Cancel queued and in-flight requests with correct queue and capacity cleanup.
+- [x] Define deterministic cancellation priority for events at the same tick.
+- [x] Test cancellation validation, routed queues, and same-tick event ordering.
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.
 - Update this file and `docs/development/verification-log.md` when task status changes.

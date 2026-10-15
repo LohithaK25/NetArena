@@ -39,12 +39,14 @@ func eventPriority(eventType EventType) int {
 		return 0
 	case EventRequestTimeout:
 		return 1
-	case EventServiceCompletes:
+	case EventRequestCancel:
 		return 2
-	case EventRouteHop:
+	case EventServiceCompletes:
 		return 3
-	default:
+	case EventRouteHop:
 		return 4
+	default:
+		return 5
 	}
 }
 

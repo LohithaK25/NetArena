@@ -126,12 +126,18 @@ func TestEventQueuePrioritizesTimeoutBeforeCompletion(t *testing.T) {
 		{
 			At:        3,
 			Sequence:  3,
+			Type:      EventRequestCancel,
+			RequestID: "req-a",
+		},
+		{
+			At:        3,
+			Sequence:  4,
 			Type:      EventRequestArrives,
 			RequestID: "req-b",
 		},
 		{
 			At:        3,
-			Sequence:  4,
+			Sequence:  5,
 			Type:      EventRouteHop,
 			RequestID: "req-c",
 			NodeID:    "node-a",
@@ -144,7 +150,10 @@ func TestEventQueuePrioritizesTimeoutBeforeCompletion(t *testing.T) {
 		}
 	}
 
-	want := []Event{events[2], events[1], events[0], events[3]}
+	// At the same tick, arrivals precede timeouts, which precede
+	// cancellations, service completions, and route hops.
+	want := []Event{events[3], events[1], events[2], events[0], events[4]}
+
 	for i, expected := range want {
 		got, ok := queue.Pop()
 		if !ok {

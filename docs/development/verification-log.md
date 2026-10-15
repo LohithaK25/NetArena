@@ -164,3 +164,26 @@ The documented exact local commands and formatting instructions are in the READM
 - **Build — passed:** `go build ./...`.
 - **Whitespace check — passed:** `git diff --check`. Git emitted LF-to-CRLF warnings, which did not cause the check to fail.
 - **Limitations:** Race-detector verification remains blocked by the documented local compiler limitation. Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.4 — Request Cancellation
+
+**Date:** 2026-10-15
+
+### Implemented
+- Added explicit request-cancellation events and scheduling validation.
+- Added cancellation handling for queued and in-flight requests.
+- Shared terminal-request cleanup logic between cancellation and timeout handling.
+- Ensured cancelled requests leave waiting queues and release active capacity.
+- Defined deterministic same-tick priority: arrival, timeout, cancellation, service completion, then route hop.
+- Added tests for invalid cancellation schedules, terminal requests, queued and in-flight cancellation, routed worker queues, and cancellation versus completion at the same tick.
+
+### Verification
+- `go test ./internal/sim -count=1` — passed.
+- `go test ./...` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed; Git emitted only Windows LF/CRLF conversion warnings.
+
+### Limitations
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI has not been run because no Git remote is configured.

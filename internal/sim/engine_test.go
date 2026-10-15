@@ -946,3 +946,191 @@ func TestTimeoutWinsWhenCompletionOccursAtSameTick(t *testing.T) {
 		t.Fatalf("BusyWorkers() = %d, want 0", got)
 	}
 }
+
+func TestQueuedRequestCanBeCancelledAndLeavesWaitingQueue(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	for _, id := range []string{"req-active", "req-cancel", "req-waiting"} {
+		if err := engine.ScheduleArrival(id, 0); err != nil {
+			t.Fatalf("ScheduleArrival(%q) error = %v", id, err)
+		}
+	}
+	if err := engine.ScheduleCancel("req-cancel", 3); err != nil {
+		t.Fatalf("ScheduleCancel() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	if got := requests["req-cancel"].State(); got != RequestCancelled {
+		t.Errorf("cancelled request state = %s, want cancelled", got)
+	}
+	if got := requests["req-active"].State(); got != RequestSucceeded {
+		t.Errorf("active request state = %s, want succeeded", got)
+	}
+	if got := requests["req-waiting"].State(); got != RequestSucceeded {
+		t.Errorf("waiting request state = %s, want succeeded", got)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+	if len(engine.waiting) != 0 {
+		t.Errorf("waiting queue = %v, want empty", engine.waiting)
+	}
+}
+
+func TestInFlightRequestCanBeCancelledAndReleasesWorker(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-cancel", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.ScheduleArrival("req-next", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.ScheduleCancel("req-cancel", 3); err != nil {
+		t.Fatalf("ScheduleCancel() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	if got := requests["req-cancel"].State(); got != RequestCancelled {
+		t.Errorf("cancelled request state = %s, want cancelled", got)
+	}
+	if got := requests["req-next"].State(); got != RequestSucceeded {
+		t.Errorf("next request state = %s, want succeeded", got)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+}
+
+func TestCancellationWinsWhenCompletionOccursAtSameTick(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-cancel", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.ScheduleCancel("req-cancel", 10); err != nil {
+		t.Fatalf("ScheduleCancel() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-cancel"]
+	if got := request.State(); got != RequestCancelled {
+		t.Fatalf("request state = %s, want cancelled", got)
+	}
+
+	finishedAt, ok := request.FinishedAt()
+	if !ok {
+		t.Fatal("cancelled request has no finished timestamp")
+	}
+	if finishedAt != 10 {
+		t.Errorf("finished tick = %d, want 10", finishedAt)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+}
+
+func TestScheduleCancelRejectsInvalidRequests(t *testing.T) {
+	tests := []struct {
+		name      string
+		requestID string
+		at        Tick
+		setup     func(*Engine) error
+		wantErr   bool
+	}{
+		{
+			name:      "empty request ID",
+			requestID: " ",
+			at:        1,
+			wantErr:   true,
+		},
+		{
+			name:      "unknown request",
+			requestID: "missing",
+			at:        1,
+			wantErr:   true,
+		},
+		{
+			name:      "negative tick",
+			requestID: "req-cancel",
+			at:        -1,
+			setup: func(e *Engine) error {
+				return e.ScheduleArrival("req-cancel", 0)
+			},
+			wantErr: true,
+		},
+		{
+			name:      "tick before current time",
+			requestID: "req-cancel",
+			at:        0,
+			setup: func(e *Engine) error {
+				if err := e.ScheduleArrival("req-cancel", 0); err != nil {
+					return err
+				}
+				if err := e.Run(); err != nil {
+					return err
+				}
+				return nil
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := NewEngine(1, 1)
+			if err != nil {
+				t.Fatalf("NewEngine() error = %v", err)
+			}
+
+			if tt.setup != nil {
+				if err := tt.setup(engine); err != nil {
+					t.Fatalf("setup error = %v", err)
+				}
+			}
+
+			err = engine.ScheduleCancel(tt.requestID, tt.at)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ScheduleCancel() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestScheduleCancelRejectsTerminalRequest(t *testing.T) {
+	engine, err := NewEngine(1, 1)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-terminal", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if err := engine.ScheduleCancel("req-terminal", engine.CurrentTick()); err == nil {
+		t.Fatal("ScheduleCancel() accepted a terminal request")
+	}
+}

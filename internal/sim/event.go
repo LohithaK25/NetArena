@@ -8,6 +8,7 @@ type EventType uint8
 const (
 	EventRequestArrives EventType = iota + 1
 	EventRequestTimeout
+	EventRequestCancel
 	EventServiceCompletes
 	EventRouteHop
 )
@@ -19,6 +20,8 @@ func (t EventType) String() string {
 		return "request_arrives"
 	case EventRequestTimeout:
 		return "request_timeout"
+	case EventRequestCancel:
+		return "request_cancel"
 	case EventServiceCompletes:
 		return "service_completes"
 	case EventRouteHop:

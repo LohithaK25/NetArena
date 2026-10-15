@@ -498,3 +498,53 @@ func TestRoutedQueuedRequestTimesOutAndPreservesWorkerQueue(t *testing.T) {
 		t.Errorf("worker waiting queue = %v, want empty", engine.workerWaiting["worker"])
 	}
 }
+
+func TestRoutedQueuedRequestCanBeCancelledAndPreservesWorkerQueue(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker"},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 10, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	for _, id := range []string{"req-active", "req-cancel", "req-waiting"} {
+		if err := engine.ScheduleRoutedArrival(id, "client", 0); err != nil {
+			t.Fatalf("ScheduleRoutedArrival(%q) error = %v", id, err)
+		}
+	}
+
+	if err := engine.ScheduleCancel("req-cancel", 3); err != nil {
+		t.Fatalf("ScheduleCancel() error = %v", err)
+	}
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	if got := requests["req-cancel"].State(); got != RequestCancelled {
+		t.Errorf("cancelled request state = %s, want cancelled", got)
+	}
+	if got := requests["req-active"].State(); got != RequestSucceeded {
+		t.Errorf("active request state = %s, want succeeded", got)
+	}
+	if got := requests["req-waiting"].State(); got != RequestSucceeded {
+		t.Errorf("waiting request state = %s, want succeeded", got)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+	if got := engine.workerBusy["worker"]; got != 0 {
+		t.Errorf("worker busy count = %d, want 0", got)
+	}
+	if got := len(engine.workerWaiting["worker"]); got != 0 {
+		t.Errorf("worker waiting queue = %v, want empty", engine.workerWaiting["worker"])
+	}
+}
