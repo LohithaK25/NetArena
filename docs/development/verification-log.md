@@ -114,3 +114,13 @@ The documented exact local commands and formatting instructions are in the READM
 - Local race-detector verification remains blocked by the available C compiler.
 - Hosted GitHub Actions CI remains unverified.
 - Benchmark results may vary with system load.
+
+## Phase 2 verification — 2026-10-15
+
+- Topology validation and deterministic round-robin routing.
+- Topology-aware request arrival and route-hop events.
+- Failure handling for dead ends and routing cycles.
+- FIFO waiting when the shared service capacity is full.
+- Verification: `go test ./...`, `go vet ./...`, `go build ./...`, and `git diff --check` all passed.
+- Limitation: all worker nodes currently share one global service-capacity pool; per-node capacity and network-hop latency are not implemented.
+- Note: Git emitted LF-to-CRLF warnings, which did not cause the checks to fail.

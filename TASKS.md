@@ -26,6 +26,15 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Add event queue and engine benchmarks.
 - [x] Verify the canonical scenario.
 
+## Phase 2 â€” Topology and Routing
+- [x] Add topology model and validation.
+- [x] Implement deterministic round-robin routing.
+- [x] Integrate topology-aware request routing into the simulation engine.
+- [x] Handle routing dead ends and cycles.
+- [x] Test FIFO waiting under shared worker-capacity constraints.
+- [ ] Model independent capacity for each worker node.
+- [ ] Add configurable network-hop latency.
+- [ ] Add routing tests for multiple worker nodes and round-robin distribution.
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.
 - Update this file and `docs/development/verification-log.md` when task status changes.
