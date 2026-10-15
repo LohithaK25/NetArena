@@ -140,3 +140,9 @@ The documented exact local commands and formatting instructions are in the READM
 - **Build — passed:** `go build ./...`.
 - **Whitespace check — passed:** `git diff --check`. Git emitted LF-to-CRLF warnings; these did not cause the check to fail.
 - **Remaining work:** Configurable network-hop latency. Race-detector verification remains blocked by the previously documented local compiler limitation; hosted CI remains unverified because no Git remote is configured.
+- Connection latency is measured in simulation ticks; zero means instantaneous routing.
+- Negative connection latency is rejected.
+- The router preserves deterministic round-robin selection and returns the chosen connection's latency.
+- Route-hop scheduling checks for tick overflow.
+- Verification passed: focused latency/overflow tests, go test ./..., go vet ./..., go build ./..., and git diff --check.
+- The race detector and hosted CI were not verified as part of this run.

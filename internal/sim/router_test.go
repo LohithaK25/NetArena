@@ -136,3 +136,44 @@ func TestNewRouterRejectsInvalidTopology(t *testing.T) {
 		t.Fatal("NewRouter() should reject invalid topology")
 	}
 }
+
+func TestRouterReturnsLatencyForSelectedConnection(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker-a", Type: NodeWorker},
+			{ID: "worker-b", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker-a", Latency: 2},
+			{From: "client", To: "worker-b", Latency: 5},
+		},
+	}
+
+	router, err := NewRouter(topology)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+
+	first, firstLatency, err := router.NextHopWithLatency("client")
+	if err != nil {
+		t.Fatalf("first NextHopWithLatency() error = %v", err)
+	}
+	if first.ID != "worker-a" || firstLatency != 2 {
+		t.Fatalf(
+			"first hop = (%q, %d), want (%q, 2)",
+			first.ID, firstLatency, "worker-a",
+		)
+	}
+
+	second, secondLatency, err := router.NextHopWithLatency("client")
+	if err != nil {
+		t.Fatalf("second NextHopWithLatency() error = %v", err)
+	}
+	if second.ID != "worker-b" || secondLatency != 5 {
+		t.Fatalf(
+			"second hop = (%q, %d), want (%q, 5)",
+			second.ID, secondLatency, "worker-b",
+		)
+	}
+}

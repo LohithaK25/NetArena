@@ -38,8 +38,9 @@ type Node struct {
 
 // Connection is a directed link between two topology nodes.
 type Connection struct {
-	From string
-	To   string
+	From    string
+	To      string
+	Latency Tick
 }
 
 // Topology describes the nodes and directed connections in a simulation.
@@ -71,10 +72,22 @@ func (t Topology) Validate() error {
 		nodes[node.ID] = node
 	}
 
-	seenConnections := make(map[Connection]bool, len(t.Connections))
+	type connectionKey struct {
+		from string
+		to   string
+	}
+
+	seenConnections := make(map[connectionKey]bool, len(t.Connections))
 	for _, connection := range t.Connections {
 		if connection.From == "" || connection.To == "" {
 			return fmt.Errorf("connection endpoints must not be empty")
+		}
+		if connection.Latency < 0 {
+			return fmt.Errorf(
+				"connection from %q to %q has negative latency",
+				connection.From,
+				connection.To,
+			)
 		}
 		if connection.From == connection.To {
 			return fmt.Errorf("connection %q cannot point to itself", connection.From)
@@ -85,14 +98,20 @@ func (t Topology) Validate() error {
 		if _, exists := nodes[connection.To]; !exists {
 			return fmt.Errorf("connection references unknown destination node %q", connection.To)
 		}
-		if seenConnections[connection] {
+		key := connectionKey{
+			from: connection.From,
+			to:   connection.To,
+		}
+
+		if seenConnections[key] {
 			return fmt.Errorf(
 				"duplicate connection from %q to %q",
 				connection.From,
 				connection.To,
 			)
 		}
-		seenConnections[connection] = true
+
+		seenConnections[key] = true
 	}
 
 	return nil

@@ -267,7 +267,7 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		return e.startWorkerService(request, nodeID)
 	}
 
-	next, err := e.router.NextHop(nodeID)
+	next, latency, err := e.router.NextHopWithLatency(nodeID)
 	if err != nil {
 		return e.failQueuedRequest(request, err.Error())
 	}
@@ -284,8 +284,12 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		)
 	}
 
+	if latency > 0 && e.now > Tick(math.MaxInt64)-latency {
+		return fmt.Errorf("route-hop tick overflow for request %q", requestID)
+	}
+
 	if err := e.schedule(Event{
-		At:        e.now,
+		At:        e.now + latency,
 		Type:      EventRouteHop,
 		RequestID: requestID,
 		NodeID:    next.ID,

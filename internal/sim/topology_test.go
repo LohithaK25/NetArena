@@ -129,3 +129,19 @@ func TestTopologyRejectsNegativeWorkerCapacity(t *testing.T) {
 		t.Fatal("Validate() accepted a negative worker capacity")
 	}
 }
+
+func TestTopologyRejectsNegativeConnectionLatency(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: -1},
+		},
+	}
+
+	if err := topology.Validate(); err == nil {
+		t.Fatal("Validate() accepted negative connection latency")
+	}
+}

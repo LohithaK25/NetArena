@@ -1,6 +1,9 @@
 package sim
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func routingTestTopology() Topology {
 	return Topology{
@@ -361,5 +364,86 @@ func TestRoutedCompletionPreservesWaitingRequestWhenNextServiceCannotStart(t *te
 	}
 	if got := engine.Requests()["req-2"].State(); got != RequestQueued {
 		t.Errorf("req-2 state = %s, want queued", got)
+	}
+}
+
+func TestRoutedEngineAppliesNetworkHopLatency(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "lb", Type: NodeLoadBalancer},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "lb", Latency: 2},
+			{From: "lb", To: "worker", Latency: 5},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 3, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-latency", "client", 0); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-latency"]
+	if request == nil {
+		t.Fatal("request not found")
+	}
+
+	startedAt, started := request.StartedAt()
+	if !started {
+		t.Fatal("StartedAt() reports no start timestamp")
+	}
+	if want := Tick(7); startedAt != want {
+		t.Errorf("StartedAt() = %d, want %d", startedAt, want)
+	}
+
+	finishedAt, finished := request.FinishedAt()
+	if !finished {
+		t.Fatal("FinishedAt() reports no finish timestamp")
+	}
+	if want := Tick(10); finishedAt != want {
+		t.Errorf("FinishedAt() = %d, want %d", finishedAt, want)
+	}
+	if got, want := engine.CurrentTick(), Tick(10); got != want {
+		t.Errorf("CurrentTick() = %d, want %d", got, want)
+	}
+	if got := request.State(); got != RequestSucceeded {
+		t.Errorf("State() = %s, want %s", got, RequestSucceeded)
+	}
+}
+
+func TestRoutedEngineRejectsRouteHopTickOverflow(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 1, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	arrivalTick := Tick(math.MaxInt64)
+	if err := engine.ScheduleRoutedArrival("req-overflow", "client", arrivalTick); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+
+	err = engine.Run()
+	if err == nil {
+		t.Fatal("Run() accepted a route hop that overflows the tick")
 	}
 }

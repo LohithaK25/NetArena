@@ -33,7 +33,7 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Handle routing dead ends and cycles.
 - [x] Test FIFO waiting under shared worker-capacity constraints.
 - [x] Model independent capacity for each worker node.
-- [ ] Add configurable network-hop latency.
+- [x] Add configurable network-hop latency.
 - [x] Add routing tests for multiple worker nodes and round-robin distribution.
 - [x] Test worker-local FIFO queues and completion handoff failure handling.
 ## Working rules
