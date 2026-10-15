@@ -447,3 +447,54 @@ func TestRoutedEngineRejectsRouteHopTickOverflow(t *testing.T) {
 		t.Fatal("Run() accepted a route hop that overflows the tick")
 	}
 }
+
+func TestRoutedQueuedRequestTimesOutAndPreservesWorkerQueue(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker"},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 10, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	for _, id := range []string{"req-active", "req-timeout", "req-waiting"} {
+		if err := engine.ScheduleRoutedArrival(id, "client", 0); err != nil {
+			t.Fatalf("ScheduleRoutedArrival(%q): %v", id, err)
+		}
+	}
+
+	if err := engine.ScheduleTimeout("req-timeout", 3); err != nil {
+		t.Fatalf("ScheduleTimeout() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	if got := requests["req-timeout"].State(); got != RequestTimedOut {
+		t.Errorf("req-timeout state = %s, want timed_out", got)
+	}
+	if got := requests["req-active"].State(); got != RequestSucceeded {
+		t.Errorf("req-active state = %s, want succeeded", got)
+	}
+	if got := requests["req-waiting"].State(); got != RequestSucceeded {
+		t.Errorf("req-waiting state = %s, want succeeded", got)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Errorf("BusyWorkers() = %d, want 0", got)
+	}
+	if got := engine.workerBusy["worker"]; got != 0 {
+		t.Errorf("worker busy count = %d, want 0", got)
+	}
+	if got := len(engine.workerWaiting["worker"]); got != 0 {
+		t.Errorf("worker waiting queue = %v, want empty", engine.workerWaiting["worker"])
+	}
+}

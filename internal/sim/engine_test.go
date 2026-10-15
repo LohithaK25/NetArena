@@ -711,3 +711,238 @@ func TestCanonicalScenario(t *testing.T) {
 		t.Errorf("waiting queue = %v, want empty", engine.waiting)
 	}
 }
+
+func TestScheduleTimeoutSchedulesDeadlineWithoutChangingRequestState(t *testing.T) {
+	engine, err := NewEngine(1, 5)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-timeout", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+
+	if err := engine.ScheduleTimeout("req-timeout", 3); err != nil {
+		t.Fatalf("ScheduleTimeout() error = %v", err)
+	}
+
+	request := engine.Requests()["req-timeout"]
+	if request.State() != RequestCreated {
+		t.Fatalf("state after scheduling timeout = %s, want created", request.State())
+	}
+}
+
+func TestScheduleTimeoutRejectsInvalidRequests(t *testing.T) {
+	tests := []struct {
+		name      string
+		requestID string
+		deadline  Tick
+		setup     func(*Engine) error
+		wantErr   bool
+	}{
+		{
+			name:      "empty request ID",
+			requestID: "",
+			deadline:  5,
+			wantErr:   true,
+		},
+		{
+			name:      "unknown request",
+			requestID: "missing",
+			deadline:  5,
+			wantErr:   true,
+		},
+		{
+			name:      "negative deadline",
+			requestID: "req-1",
+			deadline:  -1,
+			setup: func(e *Engine) error {
+				return e.ScheduleArrival("req-1", 0)
+			},
+			wantErr: true,
+		},
+		{
+			name:      "deadline before current tick",
+			requestID: "req-1",
+			deadline:  1,
+			setup: func(e *Engine) error {
+				if err := e.ScheduleArrival("req-1", 0); err != nil {
+					return err
+				}
+				return e.Run()
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := NewEngine(1, 2)
+			if err != nil {
+				t.Fatalf("NewEngine() error = %v", err)
+			}
+
+			if tt.setup != nil {
+				if err := tt.setup(engine); err != nil {
+					t.Fatalf("setup error = %v", err)
+				}
+			}
+
+			err = engine.ScheduleTimeout(tt.requestID, tt.deadline)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ScheduleTimeout() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestScheduleTimeoutRejectsTerminalRequest(t *testing.T) {
+	engine, err := NewEngine(1, 1)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-terminal", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+
+	// Run the request to completion before attempting to schedule a timeout.
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if err := engine.ScheduleTimeout("req-terminal", engine.CurrentTick()); err == nil {
+		t.Fatal("ScheduleTimeout() accepted a terminal request")
+	}
+}
+
+func TestQueuedRequestTimesOutAndLeavesWaitingQueue(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-active", 0); err != nil {
+		t.Fatalf("ScheduleArrival(req-active) error = %v", err)
+	}
+	if err := engine.ScheduleArrival("req-waiting", 1); err != nil {
+		t.Fatalf("ScheduleArrival(req-waiting) error = %v", err)
+	}
+	if err := engine.ScheduleTimeout("req-waiting", 3); err != nil {
+		t.Fatalf("ScheduleTimeout() error = %v", err)
+	}
+
+	err = engine.Run()
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	waiting := engine.Requests()["req-waiting"]
+	if waiting.State() != RequestTimedOut {
+		t.Fatalf("waiting request state = %s, want timed_out", waiting.State())
+	}
+
+	finishedAt, hasFinishedAt := waiting.FinishedAt()
+	if !hasFinishedAt || finishedAt != 3 {
+		t.Fatalf("FinishedAt() = (%d, %v), want (3, true)", finishedAt, hasFinishedAt)
+	}
+
+	active := engine.Requests()["req-active"]
+	if active.State() != RequestSucceeded {
+		t.Fatalf("active request state = %s, want succeeded", active.State())
+	}
+
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Fatalf("BusyWorkers() = %d, want 0", got)
+	}
+}
+
+func TestInFlightRequestTimesOutAndReleasesWorker(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-timeout", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.ScheduleTimeout("req-timeout", 3); err != nil {
+		t.Fatalf("ScheduleTimeout() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-timeout"]
+	if got := request.State(); got != RequestTimedOut {
+		t.Fatalf("state = %s, want %s", got, RequestTimedOut)
+	}
+
+	finishedAt, ok := request.FinishedAt()
+	if !ok || finishedAt != 3 {
+		t.Fatalf("FinishedAt() = (%d, %v), want (3, true)", finishedAt, ok)
+	}
+
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Fatalf("BusyWorkers() = %d, want 0", got)
+	}
+}
+
+func TestTimedOutInFlightRequestDoesNotSucceedOnStaleCompletion(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-timeout", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.ScheduleTimeout("req-timeout", 3); err != nil {
+		t.Fatalf("ScheduleTimeout() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-timeout"]
+	if got := request.State(); got != RequestTimedOut {
+		t.Fatalf("state after stale completion = %s, want %s", got, RequestTimedOut)
+	}
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Fatalf("BusyWorkers() after stale completion = %d, want 0", got)
+	}
+}
+
+func TestTimeoutWinsWhenCompletionOccursAtSameTick(t *testing.T) {
+	engine, err := NewEngine(1, 10)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-deadline", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+	if err := engine.ScheduleTimeout("req-deadline", 10); err != nil {
+		t.Fatalf("ScheduleTimeout() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request := engine.Requests()["req-deadline"]
+	if got := request.State(); got != RequestTimedOut {
+		t.Fatalf("state = %s, want %s", got, RequestTimedOut)
+	}
+
+	finishedAt, ok := request.FinishedAt()
+	if !ok || finishedAt != 10 {
+		t.Fatalf("FinishedAt() = (%d, %v), want (10, true)", finishedAt, ok)
+	}
+
+	if got := engine.BusyWorkers(); got != 0 {
+		t.Fatalf("BusyWorkers() = %d, want 0", got)
+	}
+}

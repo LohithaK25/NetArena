@@ -128,6 +128,36 @@ func (e *Engine) ScheduleRoutedArrival(requestID, sourceNode string, at Tick) er
 	return e.scheduleArrival(requestID, at, sourceNode)
 }
 
+// ScheduleTimeout schedules an absolute deadline for an existing request.
+func (e *Engine) ScheduleTimeout(requestID string, deadline Tick) error {
+	if strings.TrimSpace(requestID) == "" {
+		return fmt.Errorf("request ID must not be empty")
+	}
+
+	request, exists := e.requests[requestID]
+	if !exists {
+		return fmt.Errorf("cannot schedule timeout for unknown request %q", requestID)
+	}
+
+	if request.IsTerminal() {
+		return fmt.Errorf("cannot schedule timeout for terminal request %q", requestID)
+	}
+
+	if deadline < e.now {
+		return fmt.Errorf(
+			"timeout deadline %d precedes current tick %d",
+			deadline,
+			e.now,
+		)
+	}
+
+	return e.schedule(Event{
+		At:        deadline,
+		Type:      EventRequestTimeout,
+		RequestID: requestID,
+	})
+}
+
 // Run processes every currently scheduled event.
 func (e *Engine) Run() error {
 	for e.queue.Len() > 0 {
@@ -155,7 +185,9 @@ func (e *Engine) Run() error {
 				return err
 			}
 		case EventRequestTimeout:
-			return fmt.Errorf("request timeout handling is not implemented yet")
+			if err := e.handleTimeout(event.RequestID); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unsupported event type: %s", event.Type)
 		}
@@ -206,6 +238,19 @@ func (e *Engine) handleArrival(requestID string) error {
 		return fmt.Errorf("arrival references unknown request %q", requestID)
 	}
 
+	if request.State() != RequestCreated {
+		switch request.State() {
+		case RequestSucceeded, RequestFailed, RequestTimedOut:
+			return nil
+		default:
+			return fmt.Errorf(
+				"arrival for request %q requires created state, got %s",
+				requestID,
+				request.State(),
+			)
+		}
+	}
+
 	if err := request.Transition(RequestQueued, e.now, ""); err != nil {
 		return err
 	}
@@ -235,6 +280,10 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 	request, exists := e.requests[requestID]
 	if !exists {
 		return fmt.Errorf("route hop references unknown request %q", requestID)
+	}
+	switch request.State() {
+	case RequestSucceeded, RequestFailed, RequestTimedOut:
+		return nil
 	}
 	if e.router == nil {
 		return fmt.Errorf("route hop encountered without a configured router")
@@ -375,6 +424,10 @@ func (e *Engine) handleCompletion(requestID, workerID string) error {
 	if !exists {
 		return fmt.Errorf("completion references unknown request %q", requestID)
 	}
+	switch request.State() {
+	case RequestSucceeded, RequestFailed, RequestTimedOut:
+		return nil
+	}
 	if e.busyWorkers <= 0 {
 		return fmt.Errorf("completion encountered with no busy workers")
 	}
@@ -444,6 +497,113 @@ func (e *Engine) handleCompletion(requestID, workerID string) error {
 	}
 
 	return nil
+}
+
+func (e *Engine) handleTimeout(requestID string) error {
+	request, exists := e.requests[requestID]
+	if !exists {
+		return fmt.Errorf("timeout references unknown request %q", requestID)
+	}
+
+	state := request.State()
+
+	// Ignore stale timeout events for requests that are already terminal.
+	switch state {
+	case RequestSucceeded, RequestFailed, RequestTimedOut:
+		return nil
+	}
+
+	workerID := ""
+	if state == RequestInFlight {
+		if e.router == nil {
+			if e.busyWorkers <= 0 {
+				return fmt.Errorf("timeout encountered with no busy workers")
+			}
+		} else {
+			workerID = e.requestNodes[requestID]
+			if workerID == "" {
+				return fmt.Errorf("in-flight request %q has no worker", requestID)
+			}
+			if e.workerBusy[workerID] <= 0 {
+				return fmt.Errorf("worker %q timed out a request with no active work", workerID)
+			}
+		}
+	}
+
+	// Remove a queued request from whichever waiting queue contains it.
+	if state == RequestQueued {
+		if e.router == nil {
+			e.waiting = removeRequestID(e.waiting, requestID)
+		} else if workerID = e.requestNodes[requestID]; workerID != "" {
+			e.workerWaiting[workerID] = removeRequestID(
+				e.workerWaiting[workerID],
+				requestID,
+			)
+		}
+	}
+
+	if err := request.Transition(RequestTimedOut, e.now, ""); err != nil {
+		return err
+	}
+
+	// Release capacity if the request was actively being processed.
+	if state == RequestInFlight {
+		e.busyWorkers--
+
+		if e.router == nil {
+			if len(e.waiting) > 0 {
+				nextID := e.waiting[0]
+				nextRequest, found := e.requests[nextID]
+				if !found {
+					return fmt.Errorf("waiting queue references unknown request %q", nextID)
+				}
+				if err := e.startService(nextRequest); err != nil {
+					return err
+				}
+				e.waiting = e.waiting[1:]
+			}
+		} else {
+			e.workerBusy[workerID]--
+
+			waiting := e.workerWaiting[workerID]
+			if len(waiting) > 0 {
+				nextID := waiting[0]
+				nextRequest, found := e.requests[nextID]
+				if !found {
+					return fmt.Errorf(
+						"worker %q waiting queue references unknown request %q",
+						workerID,
+						nextID,
+					)
+				}
+				if nextRequest.State() != RequestQueued {
+					return fmt.Errorf(
+						"worker %q waiting request %q is not queued",
+						workerID,
+						nextID,
+					)
+				}
+				if err := e.startWorkerService(nextRequest, workerID); err != nil {
+					return err
+				}
+				e.workerWaiting[workerID] = waiting[1:]
+			}
+		}
+	}
+
+	delete(e.requestNodes, requestID)
+	delete(e.visitedNodes, requestID)
+
+	return nil
+}
+
+func removeRequestID(queue []string, requestID string) []string {
+	for i, id := range queue {
+		if id == requestID {
+			return append(queue[:i], queue[i+1:]...)
+		}
+	}
+	return queue
 }
 
 func (e *Engine) workerCapacity(workerID string) (int, error) {

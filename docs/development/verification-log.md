@@ -140,9 +140,27 @@ The documented exact local commands and formatting instructions are in the READM
 - **Build — passed:** `go build ./...`.
 - **Whitespace check — passed:** `git diff --check`. Git emitted LF-to-CRLF warnings; these did not cause the check to fail.
 - **Remaining work:** Configurable network-hop latency. Race-detector verification remains blocked by the previously documented local compiler limitation; hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.2 — Network-hop latency
+- **Date:** 2026-10-15
 - Connection latency is measured in simulation ticks; zero means instantaneous routing.
 - Negative connection latency is rejected.
 - The router preserves deterministic round-robin selection and returns the chosen connection's latency.
 - Route-hop scheduling checks for tick overflow.
 - Verification passed: focused latency/overflow tests, go test ./..., go vet ./..., go build ./..., and git diff --check.
 - The race detector and hosted CI were not verified as part of this run.
+
+## Phase 2.3 — Request timeouts
+- **Date:** 2026-10-15
+- **Scope:** Implemented request timeout scheduling and handling in the deterministic simulation engine.
+- **Scheduling:** Added `ScheduleTimeout` validation for blank IDs, unknown requests, terminal requests, and deadlines earlier than the current simulation tick. Invalid negative deadlines are rejected by event validation.
+- **Timeout behavior:** Queued requests are removed from their waiting queues. In-flight requests release worker capacity and allow the next eligible request to start. Timed-out requests transition to `RequestTimedOut`.
+- **Stale events:** Arrival, route-hop, completion, and timeout handlers handle terminal requests without incorrectly processing them again.
+- **Deterministic ordering:** Timeout events take priority over service-completion and route-hop events at the same tick. Arrival events are processed before timeout events at that tick.
+- **Tests:** Covered timeout scheduling and validation, terminal requests, queued and in-flight timeouts, stale completion events, same-tick timeout/completion ordering, and topology-aware worker waiting queues.
+- **Targeted tests — passed:** Timeout and event-queue regression tests, including `TestRoutedQueuedRequestTimesOutAndPreservesWorkerQueue`.
+- **Standard tests — passed:** `go test ./...`.
+- **Vet — passed:** `go vet ./...`.
+- **Build — passed:** `go build ./...`.
+- **Whitespace check — passed:** `git diff --check`. Git emitted LF-to-CRLF warnings, which did not cause the check to fail.
+- **Limitations:** Race-detector verification remains blocked by the documented local compiler limitation. Hosted CI remains unverified because no Git remote is configured.

@@ -17,6 +17,13 @@ func (h eventHeap) Less(i, j int) bool {
 	if a.At != b.At {
 		return a.At < b.At
 	}
+
+	priorityA := eventPriority(a.Type)
+	priorityB := eventPriority(b.Type)
+	if priorityA != priorityB {
+		return priorityA < priorityB
+	}
+
 	if a.Sequence != b.Sequence {
 		return a.Sequence < b.Sequence
 	}
@@ -24,6 +31,21 @@ func (h eventHeap) Less(i, j int) bool {
 		return a.Type < b.Type
 	}
 	return a.RequestID < b.RequestID
+}
+
+func eventPriority(eventType EventType) int {
+	switch eventType {
+	case EventRequestArrives:
+		return 0
+	case EventRequestTimeout:
+		return 1
+	case EventServiceCompletes:
+		return 2
+	case EventRouteHop:
+		return 3
+	default:
+		return 4
+	}
 }
 
 func (h eventHeap) Swap(i, j int) {

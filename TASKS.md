@@ -36,6 +36,10 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Add configurable network-hop latency.
 - [x] Add routing tests for multiple worker nodes and round-robin distribution.
 - [x] Test worker-local FIFO queues and completion handoff failure handling.
+- [x] Implement request deadlines and timeout events.
+- [x] Ensure timeouts release active worker capacity and remove queued requests.
+- [x] Define deterministic timeout priority when events share a tick.
+- [x] Test stale events, same-tick completion races, and topology-aware waiting queues.
 ## Working rules
 - A task is not complete merely because code exists; verification evidence is required.
 - Update this file and `docs/development/verification-log.md` when task status changes.

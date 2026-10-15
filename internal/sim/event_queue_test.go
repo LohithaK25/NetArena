@@ -107,27 +107,34 @@ func TestEventQueueCanBeReusedAfterBecomingEmpty(t *testing.T) {
 	}
 }
 
-func TestEventQueueUsesDeterministicFallbackForSequenceCollision(t *testing.T) {
+func TestEventQueuePrioritizesTimeoutBeforeCompletion(t *testing.T) {
 	queue := NewEventQueue()
 
 	events := []Event{
 		{
 			At:        3,
-			Sequence:  7,
+			Sequence:  1,
+			Type:      EventServiceCompletes,
+			RequestID: "req-a",
+		},
+		{
+			At:        3,
+			Sequence:  2,
 			Type:      EventRequestTimeout,
+			RequestID: "req-a",
+		},
+		{
+			At:        3,
+			Sequence:  3,
+			Type:      EventRequestArrives,
 			RequestID: "req-b",
 		},
 		{
 			At:        3,
-			Sequence:  7,
-			Type:      EventRequestArrives,
+			Sequence:  4,
+			Type:      EventRouteHop,
 			RequestID: "req-c",
-		},
-		{
-			At:        3,
-			Sequence:  7,
-			Type:      EventRequestArrives,
-			RequestID: "req-a",
+			NodeID:    "node-a",
 		},
 	}
 
@@ -137,7 +144,7 @@ func TestEventQueueUsesDeterministicFallbackForSequenceCollision(t *testing.T) {
 		}
 	}
 
-	want := []Event{events[2], events[1], events[0]}
+	want := []Event{events[2], events[1], events[0], events[3]}
 	for i, expected := range want {
 		got, ok := queue.Pop()
 		if !ok {
