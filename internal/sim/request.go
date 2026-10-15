@@ -60,18 +60,20 @@ func (s RequestState) IsTerminal() bool {
 // Request is the authoritative lifecycle record for one simulated request.
 // Fields are private so callers must use the validated transition method.
 type Request struct {
-	id               string
-	state            RequestState
-	createdAt        Tick
-	queuedAt         Tick
-	startedAt        Tick
-	finishedAt       Tick
-	lastTransitionAt Tick
-	hasQueuedAt      bool
-	hasStartedAt     bool
-	hasFinishedAt    bool
-	failureReason    string
-	attempts         int
+	id                      string
+	state                   RequestState
+	createdAt               Tick
+	queuedAt                Tick
+	startedAt               Tick
+	finishedAt              Tick
+	lastTransitionAt        Tick
+	hasQueuedAt             bool
+	hasStartedAt            bool
+	hasFinishedAt           bool
+	failureReason           string
+	attempts                int
+	currentAttemptStartedAt Tick
+	totalServiceTime        Tick
 }
 
 // NewRequest creates a request in the created state.
@@ -109,6 +111,13 @@ func (r *Request) QueuedAt() (Tick, bool) {
 
 func (r *Request) StartedAt() (Tick, bool) {
 	return r.startedAt, r.hasStartedAt
+}
+
+// ServiceTime returns the accumulated duration of completed service attempts.
+// Time spent in a currently active attempt is not included until that attempt
+// transitions out of RequestInFlight.
+func (r *Request) ServiceTime() Tick {
+	return r.totalServiceTime
 }
 
 func (r *Request) FinishedAt() (Tick, bool) {
@@ -153,6 +162,10 @@ func (r *Request) Transition(next RequestState, at Tick, reason string) error {
 		return fmt.Errorf("request %q: reason is only valid for a failed state", r.id)
 	}
 
+	if r.state == RequestInFlight && next != RequestInFlight {
+		r.totalServiceTime += at - r.currentAttemptStartedAt
+	}
+
 	switch next {
 	case RequestQueued:
 		r.queuedAt = at
@@ -160,6 +173,7 @@ func (r *Request) Transition(next RequestState, at Tick, reason string) error {
 	case RequestInFlight:
 		r.startedAt = at
 		r.hasStartedAt = true
+		r.currentAttemptStartedAt = at
 		r.attempts++
 	case RequestSucceeded, RequestFailed, RequestCancelled, RequestTimedOut:
 		r.finishedAt = at

@@ -254,3 +254,53 @@ func TestCreatedRequestCanBeCancelledOrTimedOut(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestServiceTimeAccumulatesAcrossAttempts(t *testing.T) {
+	request, err := NewRequest("req-service-time", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transitions := []struct {
+		state RequestState
+		at    Tick
+	}{
+		{RequestQueued, 0},
+		{RequestInFlight, 2},     // First attempt starts.
+		{RequestRetryWaiting, 5}, // First attempt runs for 3 ticks.
+		{RequestQueued, 8},       // Retry waits 3 ticks.
+		{RequestInFlight, 8},     // Second attempt starts.
+		{RequestSucceeded, 12},   // Second attempt runs for 4 ticks.
+	}
+
+	for _, transition := range transitions {
+		if err := request.Transition(transition.state, transition.at, ""); err != nil {
+			t.Fatalf("transition to %s at tick %d: %v", transition.state, transition.at, err)
+		}
+	}
+
+	if got, want := request.ServiceTime(), Tick(7); got != want {
+		t.Errorf("ServiceTime() = %d, want %d", got, want)
+	}
+}
+
+func TestRequestServiceTimeIncludesInterruptedAttempt(t *testing.T) {
+	request, err := NewRequest("req-interrupted-service", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := request.Transition(RequestQueued, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := request.Transition(RequestInFlight, 2, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := request.Transition(RequestCancelled, 5, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := request.ServiceTime(), Tick(3); got != want {
+		t.Errorf("ServiceTime() = %d, want %d", got, want)
+	}
+}

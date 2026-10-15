@@ -286,3 +286,27 @@ The documented exact local commands and formatting instructions are in the READM
 - If all eligible outgoing destinations are unavailable, routing currently fails the request instead of waiting at the upstream node.
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.9 — Simulation Observability and Scenario Reporting
+
+**Date:** 2026-10-15
+
+### Implemented
+- Added deterministic run summaries with request lifecycle counts and terminal outcomes.
+- Added a dedicated counter for requests waiting to retry, separate from queued requests.
+- Added end-to-end latency statistics for successfully completed requests, including minimum, maximum, and average latency.
+- Added service latency statistics that accumulate service time across attempts without counting retry backoff or downtime.
+- Added retry counts derived from request attempt tracking.
+- Excluded failed, cancelled, timed-out, and incomplete requests from successful-completion latency statistics.
+- Added tests for summary determinism, latency calculations, retries, failure and timeout handling, cancellation, and service-time accumulation across attempts.
+
+### Verification
+- `go test ./internal/sim -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed; Git emitted only Windows LF-to-CRLF conversion warnings.
+
+### Limitations
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
