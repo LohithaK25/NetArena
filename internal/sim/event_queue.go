@@ -84,7 +84,18 @@ type EventQueue struct {
 
 // NewEventQueue creates an empty event queue.
 func NewEventQueue() *EventQueue {
-	queue := &EventQueue{}
+	return newEventQueueWithCapacity(0)
+}
+
+// newEventQueueWithCapacity creates an empty event queue with reserved storage.
+func newEventQueueWithCapacity(initialCapacity int) *EventQueue {
+	if initialCapacity < 0 {
+		initialCapacity = 0
+	}
+
+	queue := &EventQueue{
+		events: make(eventHeap, 0, initialCapacity),
+	}
 	heap.Init(&queue.events)
 	return queue
 }

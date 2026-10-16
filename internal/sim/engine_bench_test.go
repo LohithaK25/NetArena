@@ -1,6 +1,9 @@
 package sim
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func BenchmarkEventQueuePushPop(b *testing.B) {
 	for i := 0; i < b.N; i++ {
@@ -64,4 +67,35 @@ func benchmarkRequestID(i int) string {
 	}
 
 	return "bench-" + string(buf[pos:])
+}
+
+func BenchmarkEventQueueCapacity(b *testing.B) {
+	for _, capacity := range []int{0, 2000} {
+		b.Run(fmt.Sprintf("Capacity%d", capacity), func(b *testing.B) {
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				queue := &EventQueue{
+					events: make(eventHeap, 0, capacity),
+				}
+
+				for j := 0; j < 1000; j++ {
+					if err := queue.Push(Event{
+						At:        Tick(j),
+						Type:      EventRequestArrives,
+						RequestID: benchmarkRequestID(j),
+						Sequence:  uint64(j + 1),
+					}); err != nil {
+						b.Fatalf("queue.Push() error = %v", err)
+					}
+				}
+
+				for queue.Len() > 0 {
+					if _, ok := queue.Pop(); !ok {
+						b.Fatal("queue.Pop() unexpectedly returned no event")
+					}
+				}
+			}
+		})
+	}
 }

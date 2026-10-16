@@ -63,3 +63,37 @@ func benchmarkRequestCountName(requestCount int) string {
 		return "Requests"
 	}
 }
+
+func BenchmarkExperimentSuiteValidate(b *testing.B) {
+	for _, requestCount := range []int{100, 500, 1000} {
+		b.Run(benchmarkRequestCountName(requestCount), func(b *testing.B) {
+			suite := benchmarkExperimentSuite(requestCount)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				if err := suite.Validate(); err != nil {
+					b.Fatalf("suite.Validate() error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkRunScenario(b *testing.B) {
+	for _, requestCount := range []int{100, 500, 1000} {
+		b.Run(benchmarkRequestCountName(requestCount), func(b *testing.B) {
+			scenario := benchmarkExperimentSuite(requestCount).Scenarios[0]
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				if _, err := RunScenario(scenario); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

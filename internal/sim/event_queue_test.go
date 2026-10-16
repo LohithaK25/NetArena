@@ -1,6 +1,9 @@
 package sim
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func makeTestEvent(at Tick, sequence uint64) Event {
 	return Event{
@@ -162,5 +165,25 @@ func TestEventQueuePrioritizesTimeoutBeforeCompletion(t *testing.T) {
 		if got != expected {
 			t.Fatalf("Pop() %d = %+v, want %+v", i, got, expected)
 		}
+	}
+}
+
+func TestEventQueueInitialCapacity(t *testing.T) {
+	for _, capacity := range []int{0, 8, -1} {
+		t.Run(fmt.Sprintf("capacity_%d", capacity), func(t *testing.T) {
+			queue := newEventQueueWithCapacity(capacity)
+
+			if got := queue.Len(); got != 0 {
+				t.Fatalf("Len() = %d, want 0", got)
+			}
+
+			wantCapacity := capacity
+			if wantCapacity < 0 {
+				wantCapacity = 0
+			}
+			if got := cap(queue.events); got < wantCapacity {
+				t.Fatalf("backing capacity = %d, want at least %d", got, wantCapacity)
+			}
+		})
 	}
 }

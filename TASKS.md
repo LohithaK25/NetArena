@@ -103,3 +103,15 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Run the benchmark three times per workload.
 - [x] Verify the full Go test suite, static analysis, and whitespace checks.
 - [x] Review the benchmark implementation and recorded results before committing.
+
+## Phase 2.14.2 — Simulation Allocation Profiling and Queue Preallocation
+
+- [x] Capture CPU and allocation profiles for experiment-suite execution.
+- [x] Benchmark scenario validation separately.
+- [x] Identify event-heap growth and request/snapshot allocations as profiling hotspots.
+- [x] Add an internal event-queue constructor supporting initial capacity.
+- [x] Reserve capacity for known initial scenario events.
+- [x] Test initial queue capacity and preserve existing queue ordering behavior.
+- [x] Verify the full test suite, static analysis, and whitespace checks.
+- [x] Measure scenario performance before and after queue preallocation.
+- [x] Re-run the cleaned scenario benchmark and record final measurements.

@@ -221,6 +221,14 @@ func RunScenario(s Scenario) (ScenarioResult, error) {
 		return ScenarioResult{}, err
 	}
 
+	initialEventCapacity := len(s.Arrivals) +
+		len(s.WorkerFailures) +
+		len(s.WorkerRecoveries) +
+		len(s.Timeouts) +
+		len(s.Cancellations)
+
+	engine.queue = newEventQueueWithCapacity(initialEventCapacity)
+
 	if err := engine.SetRetryPolicy(s.RetryPolicy); err != nil {
 		return ScenarioResult{}, err
 	}

@@ -521,3 +521,49 @@ Median of three runs:
 - No optimization was attempted or claimed in this milestone.
 - Race-detector verification remains blocked by the local compiler toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.14.2 — Allocation Profiling and Queue Preallocation
+
+**Date:** 2026-10-16
+
+### Implemented
+
+- Added an internal event-queue constructor that reserves initial storage.
+- Updated `RunScenario` to reserve capacity for arrivals, worker failures,
+  worker recoveries, timeouts, and cancellations.
+- Kept the existing public `NewEventQueue` and engine constructors unchanged.
+- Added tests covering zero, positive, and negative initial capacities.
+
+### Verification
+
+- `go test ./internal/sim -run 'TestEventQueue' -count=1` — passed.
+- `go test ./internal/sim -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+### Scenario benchmark
+
+Environment: Windows/amd64, Intel Core i7-1165G7 @ 2.80 GHz.
+
+Command:
+
+`go test ./internal/sim -run '^$' -bench '^BenchmarkRunScenario$' -benchmem -count=3`
+
+Pre-optimization and post-optimization measurements used the same `RunScenario` benchmark path. Post-optimization results below are medians of the latest three runs.
+
+| Requests | Before (median) | After (median) | Runtime change | Allocation change |
+|---:|---:|---:|---:|---:|
+| 100 | 115.80 µs/op | 77.98 µs/op | 32.7% faster | 13.2% lower |
+| 500 | 644.72 µs/op | 465.25 µs/op | 27.8% faster | 9.5% lower |
+| 1,000 | 1,082.95 µs/op | 1,150.997 µs/op | 6.3% slower | 8.1% lower |
+
+These are local synthetic benchmark measurements, not production performance claims. Runtime varies with system load, and the latest measurements do not show a consistent runtime improvement at every workload size. Allocation reductions were observed at all three sizes. The initial queue capacity reserves space for known initial events; dynamically generated events can still grow the heap.
+
+### Limitations
+
+- CPU and allocation profiles reflect synthetic workloads.
+- Request snapshot copying and repeated scenario validation remain
+  separate potential optimization areas.
+- Race-detector verification remains blocked by the local compiler toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
