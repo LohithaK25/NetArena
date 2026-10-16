@@ -310,3 +310,29 @@ The documented exact local commands and formatting instructions are in the READM
 ### Limitations
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.10 — Scenario Execution and Comparative Reports
+
+**Date:** 2026-10-16
+
+### Implemented
+- Added reusable scenario definitions for request arrivals, worker failures and recoveries, timeouts, cancellations, retry policies, and circuit-breaker policies.
+- Added scenario validation for configuration, duplicate request IDs, event timestamps, topology references, worker targets, and policy settings.
+- Added deterministic scenario execution and structured results containing run summaries and metrics.
+- Added comparative reports that calculate baseline and candidate metrics, including success rate, throughput, average end-to-end latency, retries, and worker utilization.
+- Added comparison deltas to make changes between baseline and candidate scenarios explicit.
+- Added per-worker comparisons containing baseline and candidate metrics, worker-presence indicators, and utilization deltas.
+- Covered workers present in both scenarios, baseline-only workers, and candidate-only workers, including offline status and circuit-breaker state.
+
+### Verification
+- Focused scenario-comparison tests — passed.
+- `go test ./internal/sim -run 'CompareScenariosIncludesPerWorkerMetrics' -count=1` — passed.
+- `go test ./internal/sim -run 'CompareScenarios' -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed; Git emitted only Windows LF-to-CRLF conversion warnings.
+- Per-worker comparison implementation committed as `97c86bd` (`feat(sim): compare per-worker metrics`).
+
+### Limitations
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
