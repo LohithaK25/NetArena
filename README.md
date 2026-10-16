@@ -1,56 +1,240 @@
 ﻿# NetArena
 
-NetArena is a distributed-systems simulation and strategy game. Players build and operate simulated infrastructure under traffic spikes, resource contention, network problems, failures, and security incidents.
+NetArena is a deterministic network and service simulation project written in Go. It models request processing, service capacity, network routing, latency, timeouts, cancellations, worker failures, recovery, and resilience policies.
+
+The project is being developed toward a simulation and strategy game in which players build and operate infrastructure under changing workloads and failure conditions.
 
 ## Project status
 
-**Phase 0 — Repository foundation.** The Go CLI and its startup-message test are the initial executable/test foundation. No simulation, API, or frontend features are implemented yet.
+**Current milestone: Phase 2.12 — Capacity Sweep CLI**
 
-## Source of truth
+Implemented:
+- Deterministic discrete-event simulation with virtual time and explicit event ordering.
+- Request lifecycle management, service capacity, and simulation metrics.
+- Topology-aware routing, round-robin distribution, worker-local queues, and network-hop latency.
+- Request timeouts and cancellations.
+- Worker failure injection and recovery.
+- Retry policies and circuit breakers.
+- Scenario execution, experiment suites, and comparative reports.
+- Service-capacity sweeps with JSON and CSV report exports.
+- CLI argument validation and automated Go tests.
 
-- `docs/PROJECT_PLAN.md` â€” project vision, roadmap, architecture direction, testing, and engineering journal.
-- `AGENTS.md` â€” instructions for AI-assisted development.
-- `TASKS.md` â€” current milestone and next actions.
-- `docs/architecture/overview.md` â€” current architecture and boundaries.
-- `docs/testing/TESTING_STRATEGY.md` â€” dedicated testing workstream.
-- `docs/development/verification-log.md` â€” commands run and evidence.
+Not yet verified or implemented as a complete product:
+- Hosted CI execution on GitHub.
+- Race-detector verification in a compatible local environment.
+- The planned browser frontend, API, and durable persistence architecture.
+- A complete playable game experience.
 
-## Development principles
+See [TASKS.md](TASKS.md) for milestone status and [the verification log](docs/development/verification-log.md) for evidence.
 
-- Correctness before complexity.
-- Tests and documentation from the first milestone.
-- Single-player correctness before multiplayer expansion.
-- Measure performance; never invent benchmark claims.
-- Mark work verified only when acceptance criteria and evidence support it.
+## Quick start
 
-## Planned starting stack
+### Prerequisites
 
-Go simulation engine/API, React + TypeScript frontend, PostgreSQL persistence, Docker for reproducible environments, and OpenTelemetry for useful instrumentation. The inspected tool versions are recorded in `docs/development/verification-log.md`.
+- Go 1.27.0, as used by the current project configuration.
+- PowerShell on Windows, or a compatible terminal on another supported Go platform.
 
-## Go development
+The simulation and CLI use the Go standard library.
 
-The Go module currently uses the provisional path `example.com/netarena` because this repository has no configured Git remote. Replace it with the repository's canonical import path before publishing the module or adding packages that import it.
+### Verify the project
 
-The current Go foundation uses Go 1.27.0 and only the standard library. From the repository root in PowerShell:
+From the repository root:
 
 ```powershell
-# Add the Go installation directory if it is not already on PATH.
-$env:Path = 'C:\Program Files\Go\bin;' + $env:Path
-
-# Check formatting without modifying files.
-$unformatted = Get-ChildItem -Recurse -Filter *.go | ForEach-Object { gofmt -l $_.FullName }
-if ($unformatted) { $unformatted; throw "Go source files are not formatted." }
-
+go test ./... -count=1
 go vet ./...
-go test -race ./...
 go build -o (Join-Path $env:TEMP 'netarena.exe') ./cmd/netarena
+```
+
+To display CLI usage:
+
+```powershell
 go run ./cmd/netarena
 ```
 
-To format Go source files before checking them:
+The formatting check used by the project is:
 
 ```powershell
-Get-ChildItem -Recurse -Filter *.go | ForEach-Object { gofmt -w $_.FullName }
+$unformatted = Get-ChildItem -Recurse -Filter *.go |
+    ForEach-Object { gofmt -l $_.FullName }
+
+if ($unformatted) {
+    $unformatted
+    throw "Go source files are not formatted."
+}
 ```
 
-GitHub Actions runs the formatting check, vet, race-enabled tests, and build on pushes and pull requests targeting `main`. A local pass does not verify a hosted CI run.
+Race-enabled tests are part of the intended verification workflow. On the current development machine, race-detector verification is blocked by the installed 32-bit MinGW GCC toolchain. A successful ordinary test run does not establish that race-enabled tests pass.
+
+## Run a service-capacity sweep
+
+The `sweep` command compares a baseline scenario against scenarios with different service capacities.
+
+Run this example from the repository root:
+
+```powershell
+go run ./cmd/netarena sweep `
+    --capacities 2,4,8 `
+    --format json `
+    --output .\sweep-report.json
+```
+
+To export CSV instead:
+
+```powershell
+go run ./cmd/netarena sweep `
+    --capacities 2,4,8 `
+    --format csv `
+    --output .\sweep-report.csv
+```
+
+Each command runs four scenarios: the baseline, followed by candidate capacities 2, 4, and 8. Each scenario uses 20 requests with the default settings.
+
+The report files are generated locally and are ignored by Git when saved at the repository root with the default filenames above.
+
+### CLI options
+
+| Option | Default | Description |
+|---|---:|---|
+| `--capacities` | Required | Comma-separated candidate service capacities |
+| `--baseline-capacity` | `1` | Baseline service capacity |
+| `--service-duration` | `5` | Service duration in simulation ticks |
+| `--requests` | `20` | Number of requests per scenario |
+| `--arrival-interval` | `1` | Ticks between consecutive request arrivals |
+| `--format` | `json` | Report format: `json` or `csv` |
+| `--output` | Required | Destination file for the report |
+
+Capacities must be positive, unique integers and cannot equal the baseline capacity. Duration, request count, and arrival interval must also be positive.
+
+For example, to compare capacities 2 and 6 against a baseline capacity of 1, with 50 requests and a service duration of 4 ticks:
+
+```powershell
+go run ./cmd/netarena sweep `
+    --capacities 2,6 `
+    --baseline-capacity 1 `
+    --service-duration 4 `
+    --requests 50 `
+    --arrival-interval 1 `
+    --format csv `
+    --output .\custom-sweep.csv
+```
+
+## Understanding the reports
+
+### JSON
+
+JSON contains the suite name, scenario-level metrics, and comparison reports. It is the more complete export format.
+
+The following shortened example illustrates a scenario's fields, not a complete sweep report:
+
+```json
+{
+  "Name": "baseline-capacity-sweep",
+  "Scenarios": [
+    {
+        "Name": "baseline",
+        "ServiceCapacity": 1,
+        "Duration": 100,
+        "TotalRequests": 20,
+        "SucceededRequests": 20,
+        "FailedRequests": 0,
+        "CancelledRequests": 0,
+        "TimedOutRequests": 0,
+        "SuccessRate": 1,
+        "Throughput": 0.2,
+        "AverageEndToEndLatency": 43,
+        "Retries": 0,
+        "WorkerUtilization": 0
+    }
+  ],
+  "Comparisons": []
+}
+```
+
+The complete JSON report includes the suite name, all scenario rows, and the comparison reports generated by the experiment suite.
+
+### CSV
+
+CSV contains one row per scenario and a stable 13-column header:
+
+```csv
+name,service_capacity,duration,total_requests,succeeded_requests,failed_requests,cancelled_requests,timed_out_requests,success_rate,throughput,average_end_to_end_latency,retries,worker_utilization
+baseline,1,100,20,20,0,0,0,1,0.2,43,0,0
+baseline-capacity-2,2,51,20,20,0,0,0,1,0.39215686274509803,18.5,0,0
+```
+
+The numeric values are illustrative results from the default workload. Actual results depend on the scenario configuration.
+
+CSV contains scenario-level metrics; comparison details and additional structured information are available in JSON.
+
+### Metric definitions
+
+| Metric | Meaning |
+|---|---|
+| `Duration` | Virtual simulation duration in ticks |
+| `TotalRequests` | Total requests included in the scenario |
+| `SucceededRequests` | Requests that completed successfully |
+| `FailedRequests` | Requests that failed |
+| `CancelledRequests` | Requests cancelled during the simulation |
+| `TimedOutRequests` | Requests that exceeded their deadlines |
+| `SuccessRate` | Fraction of requests that succeeded |
+| `Throughput` | Successful requests per unit of virtual simulation duration |
+| `AverageEndToEndLatency` | Average end-to-end latency among successful requests |
+| `Retries` | Retry count reported by the simulation |
+| `WorkerUtilization` | Worker-utilization metric reported by the simulation |
+
+Simulation ticks are virtual time units, not wall-clock seconds. Throughput and latency should therefore be interpreted using the simulation's configured time scale.
+
+A capacity sweep helps compare configurations under the same workload. It does not, by itself, establish real-world production performance.
+
+Interpret worker utilization according to the simulation's current metric implementation; it should not be treated as a real-world infrastructure utilization measurement.
+
+## Project structure
+
+```text
+NetArena/
+├── cmd/
+│   └── netarena/             # CLI entry point and CLI tests
+├── internal/
+│   └── sim/                  # Simulation engine, scenarios, reports, exports
+├── docs/
+│   ├── architecture/         # Architecture and system boundaries
+│   ├── development/          # Verification history
+│   └── testing/              # Testing strategy
+├── benchmarks/               # Benchmark work
+├── tests/                    # Additional test work
+├── web/                      # Planned frontend work
+├── deploy/                   # Deployment-related work
+├── scripts/                  # Development scripts
+├── AGENTS.md                 # AI-assisted development rules
+├── TASKS.md                  # Current milestone tracker
+├── README.md
+└── go.mod
+```
+
+The directory layout includes planned work areas; their presence does not imply that a complete frontend or deployment system is available.
+
+## Development and testing principles
+
+- Prefer correctness and deterministic behavior over unnecessary complexity.
+- Test lifecycle transitions, event ordering, validation, and failure paths.
+- Keep virtual simulation metrics distinct from real host or server measurements.
+- Record verification evidence in the development log.
+- Do not mark work complete without tests or other appropriate verification.
+
+## Architecture and project documentation
+
+- [Project plan](docs/PROJECT_PLAN.md) — vision and roadmap.
+- [Architecture overview](docs/architecture/overview.md) — current boundaries and architectural direction.
+- [Testing strategy](docs/testing/TESTING_STRATEGY.md) — testing layers and rules.
+- [Task tracker](TASKS.md) — completed and remaining milestones.
+- [Verification log](docs/development/verification-log.md) — recorded commands, outcomes, and limitations.
+- [AI-assisted development rules](AGENTS.md) — repository-specific engineering instructions.
+
+## Known limitations
+
+- The Go module path is currently `example.com/netarena`, a provisional path that should be replaced with the canonical repository path before publishing.
+- No Git remote is currently configured, so hosted CI has not been verified.
+- Local race-detector verification remains blocked by the current compiler toolchain.
+- Capacity sweeps use the existing non-topology scenario API. They do not yet represent topology worker-capacity sweeps.
+- The API, persistence layer, browser frontend, and complete game experience remain future work.

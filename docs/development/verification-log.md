@@ -454,3 +454,26 @@ The documented exact local commands and formatting instructions are in the READM
 - Capacity sweeps use the existing non-topology scenario API.
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.13 — CLI Usability and Documentation
+
+**Date:** 2026-10-16
+
+### Implemented
+- Replaced the outdated foundation-only README with the current project status.
+- Documented prerequisites, quick start, build, test, vet, and formatting commands.
+- Documented the capacity-sweep CLI options and JSON/CSV export workflows.
+- Added report structure examples, metric definitions, and simulation-time caveats.
+- Documented project structure, source-of-truth documents, and known limitations.
+
+### Verification
+- `go run ./cmd/netarena` — passed; displayed CLI help.
+- JSON sweep with candidate capacities `2,4` — passed; generated three scenarios including the baseline.
+- CSV sweep with candidate capacities `2,4` — passed; generated three scenarios including the baseline.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed with only the Windows LF-to-CRLF warning.
+
+### Limitations
+- Clean-checkout verification and hosted CI remain pending because no Git remote is configured.
+- Race-detector verification remains blocked by the local compiler toolchain.

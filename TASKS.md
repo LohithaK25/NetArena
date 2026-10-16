@@ -83,3 +83,14 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Verify CLI integration with the full test suite and static analysis.
 - [ ] Verify the hosted CI workflow after configuring a Git remote.
 - [ ] Run race-detector verification in a supported environment.
+
+## Phase 2.13 — CLI Usability and Documentation
+
+- [x] Replace the outdated foundation-only README with current implementation status.
+- [x] Document prerequisites, quick start, build, tests, vet, and formatting checks.
+- [x] Document capacity-sweep CLI options with JSON and CSV examples.
+- [x] Explain report structure, metrics, and simulation-time interpretation.
+- [x] Document project structure, architecture links, and known limitations.
+- [x] Verify the documented CLI commands with real JSON and CSV exports.
+- [x] Verify the full Go test suite, static analysis, and whitespace checks.
+- [ ] Verify the README instructions from a clean checkout after configuring a Git remote.
