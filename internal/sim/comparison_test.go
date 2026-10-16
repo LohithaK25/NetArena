@@ -152,3 +152,106 @@ func assertNear(t *testing.T, name string, got, want float64) {
 		t.Errorf("%s = %v, want %v", name, got, want)
 	}
 }
+
+func TestCompareScenariosIncludesPerWorkerMetrics(t *testing.T) {
+	baseline := ScenarioResult{
+		Name:     "baseline",
+		Duration: 10,
+		Summary:  RunSummary{TotalRequests: 1, SucceededRequests: 1},
+		Metrics: Metrics{
+			WorkerUtilization: 0.5,
+			Workers: map[string]WorkerMetrics{
+				"worker-a": {
+					Capacity:        2,
+					BusyWorkers:     1,
+					WaitingRequests: 0,
+					Utilization:     0.5,
+					Online:          true,
+					CircuitState:    CircuitClosed,
+				},
+				"worker-b": {
+					Capacity:        1,
+					BusyWorkers:     0,
+					WaitingRequests: 0,
+					Utilization:     0,
+					Online:          true,
+					CircuitState:    CircuitClosed,
+				},
+			},
+		},
+	}
+
+	candidate := ScenarioResult{
+		Name:     "degraded",
+		Duration: 12,
+		Summary:  RunSummary{TotalRequests: 1, SucceededRequests: 1},
+		Metrics: Metrics{
+			WorkerUtilization: 0.75,
+			Workers: map[string]WorkerMetrics{
+				"worker-a": {
+					Capacity:        2,
+					BusyWorkers:     2,
+					WaitingRequests: 3,
+					Utilization:     1,
+					Online:          true,
+					CircuitState:    CircuitClosed,
+				},
+				"worker-c": {
+					Capacity:        1,
+					BusyWorkers:     0,
+					WaitingRequests: 2,
+					Utilization:     0,
+					Online:          false,
+					CircuitState:    CircuitOpen,
+				},
+			},
+		},
+	}
+
+	report, err := CompareScenarios(baseline, candidate)
+	if err != nil {
+		t.Fatalf("CompareScenarios() error = %v", err)
+	}
+
+	workerA, ok := report.Workers["worker-a"]
+	if !ok {
+		t.Fatal("report is missing worker-a")
+	}
+	if !workerA.HasBaseline || !workerA.HasCandidate {
+		t.Fatal("worker-a should be present in both scenarios")
+	}
+	assertNear(t, "worker-a utilization delta", workerA.UtilizationDelta, 0.5)
+
+	if workerA.Baseline.Capacity != 2 || workerA.Candidate.Capacity != 2 {
+		t.Errorf(
+			"worker-a capacities = (%d, %d), want (2, 2)",
+			workerA.Baseline.Capacity,
+			workerA.Candidate.Capacity,
+		)
+	}
+	if workerA.Candidate.WaitingRequests != 3 {
+		t.Errorf("worker-a waiting requests = %d, want 3", workerA.Candidate.WaitingRequests)
+	}
+
+	workerB, ok := report.Workers["worker-b"]
+	if !ok {
+		t.Fatal("report is missing baseline-only worker-b")
+	}
+	if !workerB.HasBaseline || workerB.HasCandidate {
+		t.Fatal("worker-b should be present only in the baseline")
+	}
+
+	workerC, ok := report.Workers["worker-c"]
+	if !ok {
+		t.Fatal("report is missing candidate-only worker-c")
+	}
+	if workerC.HasBaseline || !workerC.HasCandidate {
+		t.Fatal("worker-c should be present only in the candidate")
+	}
+	if workerC.Candidate.Online {
+		t.Error("worker-c should be offline in the candidate")
+	}
+	if workerC.Candidate.CircuitState != CircuitOpen {
+		t.Errorf("worker-c circuit state = %v, want CircuitOpen", workerC.Candidate.CircuitState)
+	}
+}

@@ -30,11 +30,23 @@ type ScenarioComparisonDelta struct {
 	WorkerUtilization      float64
 }
 
+// WorkerComparison contains one worker's metrics from each scenario.
+type WorkerComparison struct {
+	HasBaseline  bool
+	HasCandidate bool
+
+	Baseline  WorkerMetrics
+	Candidate WorkerMetrics
+
+	UtilizationDelta float64
+}
+
 // ComparisonReport compares a candidate scenario with a baseline.
 type ComparisonReport struct {
 	Baseline  ScenarioComparisonMetrics
 	Candidate ScenarioComparisonMetrics
 	Delta     ScenarioComparisonDelta
+	Workers   map[string]WorkerComparison
 }
 
 // CompareScenarios compares two completed scenario results.
@@ -68,6 +80,7 @@ func CompareScenarios(baseline, candidate ScenarioResult) (ComparisonReport, err
 
 	baseMetrics := comparisonMetrics(baseline)
 	candidateMetrics := comparisonMetrics(candidate)
+	workerComparisons := compareWorkers(baseline.Metrics.Workers, candidate.Metrics.Workers)
 
 	return ComparisonReport{
 		Baseline:  baseMetrics,
@@ -79,6 +92,7 @@ func CompareScenarios(baseline, candidate ScenarioResult) (ComparisonReport, err
 			Retries:                candidateMetrics.Retries - baseMetrics.Retries,
 			WorkerUtilization:      candidateMetrics.WorkerUtilization - baseMetrics.WorkerUtilization,
 		},
+		Workers: workerComparisons,
 	}, nil
 }
 
@@ -102,4 +116,38 @@ func comparisonMetrics(result ScenarioResult) ScenarioComparisonMetrics {
 		Retries:                summary.Retries,
 		WorkerUtilization:      result.Metrics.WorkerUtilization,
 	}
+}
+
+func compareWorkers(
+	baseline, candidate map[string]WorkerMetrics,
+) map[string]WorkerComparison {
+	comparisons := make(map[string]WorkerComparison, len(baseline)+len(candidate))
+
+	for workerID, baselineMetrics := range baseline {
+		comparison := WorkerComparison{
+			HasBaseline: true,
+			Baseline:    baselineMetrics,
+		}
+
+		if candidateMetrics, exists := candidate[workerID]; exists {
+			comparison.HasCandidate = true
+			comparison.Candidate = candidateMetrics
+			comparison.UtilizationDelta = candidateMetrics.Utilization - baselineMetrics.Utilization
+		}
+
+		comparisons[workerID] = comparison
+	}
+
+	for workerID, candidateMetrics := range candidate {
+		if _, exists := comparisons[workerID]; exists {
+			continue
+		}
+
+		comparisons[workerID] = WorkerComparison{
+			HasCandidate: true,
+			Candidate:    candidateMetrics,
+		}
+	}
+
+	return comparisons
 }
