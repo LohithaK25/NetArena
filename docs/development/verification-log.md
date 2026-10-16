@@ -336,3 +336,72 @@ The documented exact local commands and formatting instructions are in the READM
 ### Limitations
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.11.1 — Experiment Suites
+
+**Date:** 2026-10-16
+
+### Implemented
+- Added reusable experiment suites containing ordered scenario configurations.
+- Added validation for suite names, minimum scenario count, duplicate scenario names, and invalid scenario configurations.
+- Added deterministic execution of all scenarios in a suite.
+- Compared every candidate scenario against the first scenario as the baseline.
+- Added tests for valid and invalid suites, baseline comparisons, pre-execution validation, and deterministic repeated execution.
+
+### Verification
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed.
+- Committed as `60eb04e` (`feat(sim): add experiment suites`).
+
+### Limitations
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.11.2 — Service Capacity Sweeps
+
+**Date:** 2026-10-16
+
+### Implemented
+- Added `SweepServiceCapacity` to generate an experiment suite from a baseline scenario and candidate service capacities.
+- Preserved the baseline as the first scenario and generated uniquely named candidates for each requested capacity.
+- Preserved the original scenario configuration while changing only the candidate name and service capacity.
+- Added validation for invalid baselines, empty capacity lists, non-positive capacities, duplicate capacities, and capacities matching the baseline.
+- Explicitly rejected topology-based scenarios because changing `ServiceCapacity` alone would not represent a topology worker-capacity sweep.
+- Added tests for generated scenario names and capacities, configuration preservation, invalid inputs, and baseline immutability.
+
+### Verification
+- Focused service-capacity sweep tests — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed.
+- Committed as `46338a4` (`feat(sim): add service capacity sweeps`).
+
+### Limitations
+- Service capacity sweeps do not support topology-based scenarios.
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.11.3 — Parameter Sweep Reports
+
+**Date:** 2026-10-16
+
+### Implemented
+- Added `SweepReport` and `SweepReportRow` for structured reporting of scenario sweep results.
+- Included service capacity, duration, request outcomes, success rate, throughput, average end-to-end latency, retries, and worker utilization in each report row.
+- Retained existing baseline comparison reports rather than duplicating comparison calculations.
+- Combined scenario configuration with execution results through `BuildSweepReport`.
+- Added validation for suite and result names, scenario counts and ordering, missing comparisons, non-positive durations, and scenarios without requests.
+- Added tests for capacity sweep reporting, scenario ordering, report metrics, and invalid or mismatched results.
+
+### Verification
+- Focused sweep report tests — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed.
+- Committed as `45d3d2e` (`feat(sim): add parameter sweep reports`).
+
+### Limitations
+- Reports require the original experiment suite alongside its completed result so that configured service capacities can be reported accurately.
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
