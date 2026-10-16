@@ -71,3 +71,15 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Propagate encoding, CSV writing, and flushing errors.
 - [x] Test JSON round-tripping, deterministic output, CSV escaping, empty reports, and writer failures.
 - [x] Verify focused tests, the full test suite, static analysis, formatting, and whitespace checks.
+
+## Phase 2.12 — Capacity Sweep CLI
+
+- [x] Add the `netarena sweep` CLI command.
+- [x] Support configurable candidate capacities, baseline capacity, service duration, request count, and arrival interval.
+- [x] Export sweep reports to JSON or CSV at a user-specified path.
+- [x] Validate command arguments and report file errors.
+- [x] Add CLI tests for help, JSON/CSV exports, invalid arguments, and file errors.
+- [x] Ignore generated root-level sweep report files.
+- [x] Verify CLI integration with the full test suite and static analysis.
+- [ ] Verify the hosted CI workflow after configuring a Git remote.
+- [ ] Run race-detector verification in a supported environment.

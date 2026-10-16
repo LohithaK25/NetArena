@@ -429,3 +429,28 @@ The documented exact local commands and formatting instructions are in the READM
 - CSV exports scenario-level metrics only; full comparison and per-worker details are available in JSON.
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.12 — Capacity Sweep CLI
+
+**Date:** 2026-10-16
+
+### Implemented
+- Added the `netarena sweep` command to run service-capacity experiments from the CLI.
+- Added flags for candidate capacities, baseline capacity, service duration, request count, arrival interval, report format, and output path.
+- Integrated the CLI with the existing experiment-suite, sweep-report, and export APIs.
+- Added argument validation and error handling for report file creation, writing, and closing.
+- Added CLI tests covering help output, JSON and CSV exports, invalid arguments, and output-file errors.
+- Added root-level ignore rules for `sweep-report.json` and `sweep-report.csv`.
+
+### Verification
+- `go test ./cmd/netarena -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed with only Windows LF-to-CRLF warnings.
+- Manual JSON and CSV CLI runs with candidate capacities `2,4,8` — passed; both reports contained the baseline and three candidate scenarios.
+- `git check-ignore -v .\sweep-report.json .\sweep-report.csv` — confirmed both generated report files are ignored.
+
+### Limitations
+- Capacity sweeps use the existing non-topology scenario API.
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.

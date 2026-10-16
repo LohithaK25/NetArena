@@ -35,3 +35,7 @@ temp/
 
 # Local Windows executable artifacts
 /netarena.exe
+
+# Local NetArena sweep reports
+/sweep-report.json
+/sweep-report.csv
