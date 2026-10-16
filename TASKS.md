@@ -1,4 +1,4 @@
-﻿# Current Tasks
+# Current Tasks
 
 ## Phase 0 â€” Repository foundation
 - [x] Create initial repository directory structure.
@@ -125,3 +125,13 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Verify targeted tests, the full Go test suite, static analysis, and whitespace checks.
 - [x] Benchmark experiment-suite execution and suite validation before and after the change.
 - [x] Record allocation improvements and runtime trade-offs in the verification log.
+
+## Phase 2.14.4 — Profile Request Snapshot Copying
+
+- [x] Add benchmarks for `Engine.Requests()` snapshots and `Engine.Summary()` at 100, 500, 1,000, and 5,000 requests.
+- [x] Profile snapshot allocation and CPU costs.
+- [x] Optimize `Summary()` to read the internal request registry without creating snapshots.
+- [x] Preserve independent snapshots returned by the public `Requests()` API.
+- [x] Verify targeted tests, the full Go test suite, static analysis, and whitespace checks.
+- [x] Benchmark both APIs before and after the summary optimization.
+- [x] Review the final implementation and verification-log changes before committing.

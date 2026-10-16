@@ -613,3 +613,52 @@ The baseline values are medians of three runs; follow-up values are medians of f
 - Benchmarks use local synthetic workloads and are not production-performance claims.
 - Race-detector verification remains blocked by the local compiler toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.14.4 — Profile Request Snapshot Copying
+
+**Date:** 2026-10-16
+
+### Implemented
+
+- Added `BenchmarkEngineRequestsSnapshot` and `BenchmarkEngineSummary` for 100, 500, 1,000, and 5,000 requests.
+- Captured CPU and allocation profiles for the request snapshot benchmark.
+- The allocation profile attributed approximately 70.18% of sampled allocated volume to `Request.clone` and 29.71% to `Engine.Requests`.
+- Updated `Engine.Summary()` to iterate over the engine-owned request registry directly instead of creating independent request snapshots.
+- Preserved the public `Engine.Requests()` snapshot contract and its existing isolation test.
+
+### Verification
+
+- `go test ./internal/sim -run 'TestRunSummary|TestRequestsReturnsIndependentSnapshots' -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+- Request snapshot and summary benchmarks — passed.
+
+### Benchmark environment
+
+- OS/architecture: Windows/amd64.
+- CPU: Intel Core i7-1165G7 @ 2.80 GHz.
+- Baseline snapshot command: `go test ./internal/sim -run '^$' -bench '^BenchmarkEngineRequestsSnapshot$' -benchmem -benchtime=1s -count=3`.
+- Baseline summary command: `go test ./internal/sim -run '^$' -bench '^BenchmarkEngineSummary$' -benchmem -benchtime=1s -count=3`.
+- Follow-up command: `go test ./internal/sim -run '^$' -bench '^BenchmarkEngine(RequestsSnapshot|Summary)$' -benchmem -benchtime=1s -count=3`.
+
+### Results
+
+Median of three runs. Times are per operation.
+
+| Requests | `Requests()` time | `Requests()` bytes/op | `Requests()` allocs/op | `Summary()` time | `Summary()` bytes/op | `Summary()` allocs/op |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 7,226 ns | 14,696 B | 103 | 1,178 ns | 0 B | 0 |
+| 500 | 38,232 ns | 83,304 B | 503 | 6,450 ns | 0 B | 0 |
+| 1,000 | 107,069 ns | 166,608 B | 1,005 | 14,755 ns | 0 B | 0 |
+| 5,000 | 696,788 ns | 778,434 B | 5,017 | 81,578 ns | 0 B | 0 |
+
+### Interpretation and limitations
+
+- Compared with the earlier summary benchmark medians, `Summary()` was approximately 86%–89% faster across the four workloads.
+- `Summary()` reported zero bytes allocated and zero allocations per operation at every tested size.
+- `Requests()` continues to allocate independent snapshots by design. Its behavior and measured allocation counts remained consistent with the baseline.
+- Benchmark timings vary across runs, particularly at larger workloads. These results are local synthetic measurements, not production-performance claims.
+- CPU and allocation profiles represent sampled costs accumulated over benchmark iterations, not memory retained at one time.
+- Race-detector verification remains blocked by the local compiler toolchain.
+- Hosted CI remains unverified because no Git remote is configured.

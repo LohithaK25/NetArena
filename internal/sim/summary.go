@@ -28,7 +28,7 @@ type RunSummary struct {
 }
 
 // Summary returns deterministic outcome counts and latency statistics
-// derived from independent request snapshots.
+// derived from the engine's request registry without creating snapshots.
 func (e *Engine) Summary() RunSummary {
 	summary := RunSummary{
 		TotalRequests: len(e.requests),
@@ -40,7 +40,7 @@ func (e *Engine) Summary() RunSummary {
 	summary.EndToEndLatency.Min = Tick(math.MaxInt64)
 	summary.ServiceLatency.Min = Tick(math.MaxInt64)
 
-	for _, request := range e.Requests() {
+	for _, request := range e.requests {
 		switch request.State() {
 		case RequestCreated:
 			summary.CreatedRequests++

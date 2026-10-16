@@ -99,3 +99,68 @@ func BenchmarkEventQueueCapacity(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkEngineRequestsSnapshot(b *testing.B) {
+	for _, requestCount := range []int{100, 500, 1000, 5000} {
+		b.Run(benchmarkRequestCountName(requestCount), func(b *testing.B) {
+			engine, err := NewEngine(10, 3)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			for i := 0; i < requestCount; i++ {
+				if err := engine.ScheduleArrival(
+					benchmarkRequestID(i),
+					Tick(i%100),
+				); err != nil {
+					b.Fatal(err)
+				}
+			}
+
+			if err := engine.Run(); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				requests := engine.Requests()
+				if len(requests) != requestCount {
+					b.Fatalf("Requests() returned %d requests, want %d", len(requests), requestCount)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkEngineSummary(b *testing.B) {
+	for _, requestCount := range []int{100, 500, 1000, 5000} {
+		b.Run(benchmarkRequestCountName(requestCount), func(b *testing.B) {
+			engine, err := NewEngine(10, 3)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			for i := 0; i < requestCount; i++ {
+				if err := engine.ScheduleArrival(
+					benchmarkRequestID(i),
+					Tick(i%100),
+				); err != nil {
+					b.Fatal(err)
+				}
+			}
+
+			if err := engine.Run(); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				_ = engine.Summary()
+			}
+		})
+	}
+}
