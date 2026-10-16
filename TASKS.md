@@ -64,3 +64,10 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Define deterministic event priority for worker failures and recovery.
 - [x] Test worker event validation, failure handling, stale completion events, recovery, routing, and worker metrics.
 - [x] Verify the implementation with tests, vet, build, and whitespace checks.
+
+## Phase 2.11.4 - JSON and CSV Export
+- [x] Add deterministic, indented JSON export for complete sweep reports.
+- [x] Add CSV export with a stable 13-column header and one row per scenario.
+- [x] Propagate encoding, CSV writing, and flushing errors.
+- [x] Test JSON round-tripping, deterministic output, CSV escaping, empty reports, and writer failures.
+- [x] Verify focused tests, the full test suite, static analysis, formatting, and whitespace checks.

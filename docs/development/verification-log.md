@@ -405,3 +405,27 @@ The documented exact local commands and formatting instructions are in the READM
 - Reports require the original experiment suite alongside its completed result so that configured service capacities can be reported accurately.
 - Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.11.4 - JSON and CSV Export
+
+**Date:** 2026-10-16
+
+### Implemented
+- Added `WriteSweepReportJSON` to serialize complete sweep reports as indented JSON.
+- Preserved scenario ordering and deterministic string-map key ordering in JSON output.
+- Added `WriteSweepReportCSV` with a stable 13-column header and one row per scenario.
+- Used Go's CSV writer to correctly escape names containing commas, quotes, and newlines.
+- Kept comparison and per-worker details in JSON; CSV contains scenario-level metrics.
+- Added tests for JSON round-tripping, deterministic exports, CSV headers and escaping, empty reports, and writer-error propagation.
+
+### Verification
+- `go test ./internal/sim -run 'TestWriteSweepReport' -count=1` - passed.
+- `go test ./... -count=1` - passed.
+- `go vet ./...` - passed.
+- `gofmt -l .\internal\sim\export.go .\internal\sim\export_test.go` - returned no unformatted files.
+- `git diff --check` - passed.
+
+### Limitations
+- CSV exports scenario-level metrics only; full comparison and per-worker details are available in JSON.
+- Race-detector verification remains blocked by the local 32-bit MinGW GCC toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
