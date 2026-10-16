@@ -115,3 +115,13 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Verify the full test suite, static analysis, and whitespace checks.
 - [x] Measure scenario performance before and after queue preallocation.
 - [x] Re-run the cleaned scenario benchmark and record final measurements.
+
+## Phase 2.14.3 — Reduce Redundant Scenario Validation
+
+- [x] Add a regression test confirming `RunScenario` rejects invalid scenarios.
+- [x] Extract scenario execution into a private helper for already-validated scenarios.
+- [x] Preserve validation in the public `RunScenario` entry point.
+- [x] Reuse suite validation in `RunExperimentSuite` to avoid validating each scenario twice.
+- [x] Verify targeted tests, the full Go test suite, static analysis, and whitespace checks.
+- [x] Benchmark experiment-suite execution and suite validation before and after the change.
+- [x] Record allocation improvements and runtime trade-offs in the verification log.

@@ -207,6 +207,11 @@ func RunScenario(s Scenario) (ScenarioResult, error) {
 		return ScenarioResult{}, err
 	}
 
+	return runValidatedScenario(s)
+}
+
+// runValidatedScenario executes a scenario that has already passed validation.
+func runValidatedScenario(s Scenario) (ScenarioResult, error) {
 	var (
 		engine *Engine
 		err    error

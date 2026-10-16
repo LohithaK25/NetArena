@@ -137,6 +137,21 @@ func TestScenarioRunnerSupportsTopologyAndWorkerFailure(t *testing.T) {
 	}
 }
 
+func TestRunScenarioRejectsInvalidScenario(t *testing.T) {
+	scenario := Scenario{
+		Name:            "invalid",
+		ServiceCapacity: 0,
+		ServiceDuration: 1,
+		Arrivals: []ScenarioArrival{
+			{RequestID: "req-1", At: 0},
+		},
+	}
+
+	if _, err := RunScenario(scenario); err == nil {
+		t.Fatal("RunScenario() error = nil, want validation error")
+	}
+}
+
 func TestScenarioRejectsRequestEventsBeforeArrival(t *testing.T) {
 	tests := []struct {
 		name     string

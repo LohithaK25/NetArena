@@ -58,7 +58,7 @@ func RunExperimentSuite(s ExperimentSuite) (ExperimentSuiteResult, error) {
 	}
 
 	for _, scenario := range s.Scenarios {
-		scenarioResult, err := RunScenario(scenario)
+		scenarioResult, err := runValidatedScenario(scenario)
 		if err != nil {
 			return ExperimentSuiteResult{}, fmt.Errorf(
 				"run scenario %q: %w",

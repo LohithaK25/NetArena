@@ -567,3 +567,49 @@ These are local synthetic benchmark measurements, not production performance cla
   separate potential optimization areas.
 - Race-detector verification remains blocked by the local compiler toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## Phase 2.14.3 — Reduce Redundant Scenario Validation
+
+**Date:** 2026-10-16
+
+### Implemented
+
+- Added a regression test verifying that the public `RunScenario` function rejects invalid scenarios.
+- Extracted the scenario execution body into the private `runValidatedScenario` helper.
+- Preserved validation in `RunScenario`.
+- Updated `RunExperimentSuite` to use the helper after the suite has passed validation, avoiding a second validation of every scenario.
+
+### Verification
+
+- `go test ./internal/sim -run 'TestRunScenarioRejectsInvalidScenario|TestRunExperimentSuite' -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+- Experiment-suite and suite-validation benchmarks — passed.
+
+### Benchmark environment
+
+- OS/architecture: Windows/amd64.
+- CPU: Intel Core i7-1165G7 @ 2.80 GHz.
+- Baseline command: `go test ./internal/sim -run '^$' -bench '^(BenchmarkRunExperimentSuite|BenchmarkExperimentSuiteValidate)$' -benchmem -count=3`.
+- Follow-up command: `go test ./internal/sim -run '^$' -bench '^(BenchmarkRunExperimentSuite|BenchmarkExperimentSuiteValidate)$' -benchmem -benchtime=2s -count=5`.
+
+### Experiment-suite results
+
+The baseline values are medians of three runs; follow-up values are medians of five runs.
+
+| Requests per scenario | Baseline time | Follow-up time | Baseline bytes/op | Follow-up bytes/op | Baseline allocs/op | Follow-up allocs/op |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 265,644 ns | 269,587 ns | 249,721 | 239,233 | 1,964 | 1,955 |
+| 500 | 1,247,571 ns | 1,463,810 ns | 1,447,276 | 1,365,364 | 9,206 | 9,197 |
+| 1,000 | 2,674,208 ns | 3,029,532 ns | 2,905,407 | 2,741,582 | 18,257 | 18,242 |
+
+### Interpretation and limitations
+
+- Follow-up allocations decreased by approximately 4.2%–5.7% across the three workloads.
+- Allocation counts decreased slightly at every workload size.
+- The measured follow-up runtime was approximately 1.5% slower at 100 requests, 17.3% slower at 500 requests, and 13.3% slower at 1,000 requests compared with the recorded baseline.
+- The baseline and follow-up runs used different benchmark durations, and the measurements showed runtime variability. These results do not establish a runtime improvement; the observed allocation reduction is the consistent benefit.
+- Benchmarks use local synthetic workloads and are not production-performance claims.
+- Race-detector verification remains blocked by the local compiler toolchain.
+- Hosted CI remains unverified because no Git remote is configured.
