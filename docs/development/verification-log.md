@@ -477,3 +477,47 @@ The documented exact local commands and formatting instructions are in the READM
 ### Limitations
 - Clean-checkout verification and hosted CI remain pending because no Git remote is configured.
 - Race-detector verification remains blocked by the local compiler toolchain.
+
+
+## Phase 2.14.1 — Experiment Suite Benchmarking
+
+**Date:** 2026-10-16
+
+### Implemented
+
+- Added `internal/sim/experiment_bench_test.go`.
+- Added `BenchmarkRunExperimentSuite` for workloads of 100, 500, and 1,000 requests per scenario.
+- Each suite contains a baseline and two capacity candidates, all using the same arrival schedule.
+- Scenario construction and suite validation occur outside the timed benchmark section.
+- Enabled allocation reporting for each benchmark.
+
+### Benchmark environment
+
+- OS/architecture: Windows/amd64.
+- CPU: Intel Core i7-1165G7 @ 2.80 GHz.
+- Command: `go test ./internal/sim -run '^$' -bench '^BenchmarkRunExperimentSuite$' -benchmem -count=3`.
+
+### Results
+
+Median of three runs:
+
+| Workload | Time per suite | Bytes per suite | Allocations per suite |
+|---|---:|---:|---:|
+| 100 requests × 3 scenarios | 254,554 ns/op | 287,089 B/op | 1,982 allocs/op |
+| 500 requests × 3 scenarios | 1,324,336 ns/op | 1,590,245 B/op | 9,230 allocs/op |
+| 1,000 requests × 3 scenarios | 3,098,778 ns/op | 3,146,688 B/op | 18,284 allocs/op |
+
+### Verification
+
+- `go test ./internal/sim -run '^$' -bench '^BenchmarkRunExperimentSuite$' -benchmem -count=3` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `git diff --check` — passed.
+
+### Limitations
+
+- These measurements describe local synthetic workloads and are not production-performance claims.
+- Benchmark timings vary with system load.
+- No optimization was attempted or claimed in this milestone.
+- Race-detector verification remains blocked by the local compiler toolchain.
+- Hosted CI remains unverified because no Git remote is configured.

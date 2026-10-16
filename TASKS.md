@@ -94,3 +94,12 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Verify the documented CLI commands with real JSON and CSV exports.
 - [x] Verify the full Go test suite, static analysis, and whitespace checks.
 - [ ] Verify the README instructions from a clean checkout after configuring a Git remote.
+
+## Phase 2.14.1 — Experiment Suite Benchmarking
+
+- [x] Add benchmarks for experiment-suite execution at 100, 500, and 1,000 requests per scenario.
+- [x] Use three scenarios per suite with identical arrival schedules.
+- [x] Measure execution time, bytes allocated, and allocation counts.
+- [x] Run the benchmark three times per workload.
+- [x] Verify the full Go test suite, static analysis, and whitespace checks.
+- [x] Review the benchmark implementation and recorded results before committing.
