@@ -6,7 +6,7 @@ The project is being developed toward a simulation and strategy game in which pl
 
 ## Project status
 
-**Current milestone: Phase 2.12 — Capacity Sweep CLI**
+**Current milestone: HTTP API and initial browser workflow**
 
 Implemented:
 - Deterministic discrete-event simulation with virtual time and explicit event ordering.
@@ -19,11 +19,10 @@ Implemented:
 - Service-capacity sweeps with JSON and CSV report exports.
 - CLI argument validation and automated Go tests.
 
-Not yet verified or implemented as a complete product:
+Not yet implemented or verified:
 - Hosted CI execution on GitHub.
 - Race-detector verification in a compatible local environment.
-- The planned browser frontend, API, and durable persistence architecture.
-- A complete playable game experience.
+- Durable persistence, authentication, multiplayer, and a complete playable game experience.
 
 See [TASKS.md](TASKS.md) for milestone status and [the verification log](docs/development/verification-log.md) for evidence.
 
@@ -65,6 +64,76 @@ if ($unformatted) {
 ```
 
 Race-enabled tests are part of the intended verification workflow. On the current development machine, race-detector verification is blocked by the installed 32-bit MinGW GCC toolchain. A successful ordinary test run does not establish that race-enabled tests pass.
+
+
+## Architecture
+
+```mermaid
+flowchart TD
+    User["User"]
+    UI["React + TypeScript frontend<br/>Vite development server"]
+    API["Go HTTP API<br/>127.0.0.1:8080"]
+    Engine["Deterministic simulation engine"]
+    Results["Simulation results<br/>Summary and worker metrics"]
+
+    User -->|"Configure and submit scenario"| UI
+    UI -->|HTTP JSON request| API
+    API -->|Validate and execute| Engine
+    Engine -->|Simulation result| API
+    API -->|HTTP JSON response| UI
+    UI -->|Display results or errors| User
+```
+
+The browser sends JSON scenarios to the Go API. The API validates each request, runs the simulation engine, and returns results or a structured error response. During local development, Vite proxies `/api` requests to the Go server.
+
+### Dashboard preview
+
+![NetArena dashboard showing scenario configuration and simulation results](web/public/netarena-dashboard.png)
+
+## HTTP API and browser workflow
+
+The Go server exposes a health endpoint and a simulation endpoint. The React/TypeScript frontend sends scenarios to the local API and displays returned metrics.
+
+### Start the API server
+
+Open a PowerShell terminal at the repository root:
+
+```powershell
+go run ./cmd/netarena-server
+```
+
+By default, the server listens on `127.0.0.1:8080`. Set `NETARENA_ADDR` to change the listen address, for example:
+
+```powershell
+$env:NETARENA_ADDR = "127.0.0.1:8090"
+go run ./cmd/netarena-server
+```
+
+Check server health at `http://127.0.0.1:8080/api/v1/health`.
+
+### Start the browser frontend
+
+Use a second PowerShell terminal:
+
+```powershell
+Set-Location .\web
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite. During development, Vite proxies `/api` requests to `http://127.0.0.1:8080`; start the API server first.
+
+### Frontend checks
+
+Run from `web/`:
+
+```powershell
+npm test
+npm run lint
+npm run build
+```
+
+The current browser workflow is an initial vertical slice, not a complete game. Durable persistence, authentication, and multiplayer are not implemented.
 
 ## Run a service-capacity sweep
 
@@ -194,20 +263,24 @@ Interpret worker utilization according to the simulation's current metric implem
 ```text
 NetArena/
 ├── cmd/
-│   └── netarena/             # CLI entry point and CLI tests
+│   ├── netarena/                 # CLI entry point and tests
+│   └── netarena-server/           # HTTP API server entry point
 ├── internal/
-│   └── sim/                  # Simulation engine, scenarios, reports, exports
+│   ├── api/                       # HTTP handlers and API tests
+│   └── sim/                       # Simulation engine, scenarios, reports, exports
+├── web/                           # React + TypeScript frontend and browser tests
+│   ├── e2e/                       # Playwright end-to-end tests
+│   └── public/                    # Static assets and dashboard screenshot
 ├── docs/
-│   ├── architecture/         # Architecture and system boundaries
-│   ├── development/          # Verification history
-│   └── testing/              # Testing strategy
-├── benchmarks/               # Benchmark work
-├── tests/                    # Additional test work
-├── web/                      # Planned frontend work
-├── deploy/                   # Deployment-related work
-├── scripts/                  # Development scripts
-├── AGENTS.md                 # AI-assisted development rules
-├── TASKS.md                  # Current milestone tracker
+│   ├── architecture/              # Architecture and system boundaries
+│   ├── development/               # Verification history
+│   └── testing/                   # Testing strategy
+├── benchmarks/                    # Benchmark work
+├── tests/                         # Additional test work
+├── deploy/                        # Deployment-related work
+├── scripts/                       # Development scripts
+├── AGENTS.md                      # AI-assisted development rules
+├── TASKS.md                       # Current milestone tracker
 ├── README.md
 └── go.mod
 ```
@@ -237,4 +310,4 @@ The directory layout includes planned work areas; their presence does not imply 
 - No Git remote is currently configured, so hosted CI has not been verified.
 - Local race-detector verification remains blocked by the current compiler toolchain.
 - Capacity sweeps use the existing non-topology scenario API. They do not yet represent topology worker-capacity sweeps.
-- The API, persistence layer, browser frontend, and complete game experience remain future work.
+- The HTTP API and initial browser workflow are implemented, but persistence, authentication, multiplayer, and a complete game experience remain future work.

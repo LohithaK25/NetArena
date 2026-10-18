@@ -1,9 +1,28 @@
 package sim
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
+
+type cancelAfterChecksContext struct {
+	context.Context
+	cancel      context.CancelFunc
+	checks      int
+	cancelAfter int
+}
+
+func (c *cancelAfterChecksContext) Err() error {
+	c.checks++
+	if c.checks >= c.cancelAfter {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
 
 func TestEngineProcessesTwoRequestsSequentially(t *testing.T) {
 	engine, err := NewEngine(1, 3)
@@ -1252,5 +1271,554 @@ func TestRequestsReturnsIndependentSnapshots(t *testing.T) {
 
 	if got := engine.Requests()["req-snapshot"].State(); got != RequestSucceeded {
 		t.Fatalf("engine request state after Run() = %s, want succeeded", got)
+	}
+}
+
+func TestEngineRunRejectsExceededEventBudget(t *testing.T) {
+	engine, err := NewEngine(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A small budget makes the boundary test fast and deterministic.
+	engine.maxProcessedEvents = 1
+
+	if err := engine.ScheduleArrival("req-1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleArrival("req-2", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	err = engine.Run()
+	if err == nil {
+		t.Fatal("Run() error = nil, want event-budget error")
+	}
+	if !strings.Contains(err.Error(), "processed event limit") {
+		t.Fatalf("Run() error = %q, want processed event limit error", err)
+	}
+}
+
+func TestEngineRunKeepsBudgetExhaustedAcrossCalls(t *testing.T) {
+	engine, err := NewEngine(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	engine.maxProcessedEvents = 1
+
+	for _, id := range []string{"req-1", "req-2"} {
+		if err := engine.ScheduleArrival(id, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := engine.Run(); err == nil {
+		t.Fatal("first Run() error = nil, want event-budget error")
+	}
+
+	if err := engine.Run(); err == nil {
+		t.Fatal("second Run() error = nil, want event-budget error")
+	}
+}
+
+func TestEngineRunContextStopsAfterCancellationDuringExecution(t *testing.T) {
+	engine, err := NewEngine(1, 1)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("req-1", 0); err != nil {
+		t.Fatalf("ScheduleArrival(req-1): %v", err)
+	}
+	if err := engine.ScheduleArrival("req-2", 10); err != nil {
+		t.Fatalf("ScheduleArrival(req-2): %v", err)
+	}
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctx := &cancelAfterChecksContext{
+		Context:     baseCtx,
+		cancel:      cancel,
+		cancelAfter: 2,
+	}
+
+	err = engine.RunContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunContext() error = %v, want %v", err, context.Canceled)
+	}
+
+	if engine.CurrentTick() != 0 {
+		t.Errorf("CurrentTick() = %d, want 0 after processing only the first event", engine.CurrentTick())
+	}
+
+	if engine.processedEvents != 1 {
+		t.Errorf("processedEvents = %d, want 1", engine.processedEvents)
+	}
+}
+
+func TestEngineRunContextRejectsCancelledContext(t *testing.T) {
+	engine, err := NewEngine(1, 1)
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+
+	if err := engine.ScheduleArrival("request-1", 0); err != nil {
+		t.Fatalf("ScheduleArrival() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = engine.RunContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunContext() error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestEngineAccumulatesLatencyAcrossRoute(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "lb", Type: NodeLoadBalancer},
+			{ID: "service", Type: NodeService},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{From: "client", To: "lb", Latency: 3},
+			{From: "lb", To: "service", Latency: 5},
+			{From: "service", To: "worker", Latency: 2},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 4, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-1", "client", 0); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request, exists := engine.Requests()["req-1"]
+	if !exists {
+		t.Fatal("request req-1 not found")
+	}
+	if got := request.State(); got != RequestSucceeded {
+		t.Fatalf("request state = %s, want %s", got, RequestSucceeded)
+	}
+	if got := engine.CurrentTick(); got != 14 {
+		t.Fatalf("CurrentTick() = %d, want 14", got)
+	}
+}
+
+func TestEngineFailsRequestWhenPacketIsDropped(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{
+				From:        "client",
+				To:          "worker",
+				Latency:     3,
+				DropPackets: true,
+			},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 4, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-drop", "client", 0); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request, exists := engine.Requests()["req-drop"]
+	if !exists {
+		t.Fatal("request req-drop not found")
+	}
+	if got := request.State(); got != RequestFailed {
+		t.Fatalf("request state = %s, want %s", got, RequestFailed)
+	}
+
+	wantReason := `packet dropped on connection "client" -> "worker"`
+	if got := request.FailureReason(); got != wantReason {
+		t.Fatalf("failure reason = %q, want %q", got, wantReason)
+	}
+	if got := engine.CurrentTick(); got != 0 {
+		t.Fatalf("current tick = %d, want 0", got)
+	}
+}
+
+func TestEngineRoutesSuccessfullyWhenPacketsAreNotDropped(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{
+				From:    "client",
+				To:      "worker",
+				Latency: 3,
+			},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 4, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-normal", "client", 0); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request, exists := engine.Requests()["req-normal"]
+	if !exists {
+		t.Fatal("request req-normal not found")
+	}
+	if got := request.State(); got != RequestSucceeded {
+		t.Fatalf("request state = %s, want %s", got, RequestSucceeded)
+	}
+	if got := engine.CurrentTick(); got != 7 {
+		t.Fatalf("current tick = %d, want 7 (3 latency + 4 service)", got)
+	}
+}
+
+func TestNewEngineWithSeedProducesReproducibleRandomSequence(t *testing.T) {
+	first, err := NewEngineWithSeed(1, 1, 42)
+	if err != nil {
+		t.Fatalf("first NewEngineWithSeed() error = %v", err)
+	}
+
+	second, err := NewEngineWithSeed(1, 1, 42)
+	if err != nil {
+		t.Fatalf("second NewEngineWithSeed() error = %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		gotFirst := first.rng.Int63()
+		gotSecond := second.rng.Int63()
+
+		if gotFirst != gotSecond {
+			t.Fatalf(
+				"random values differ at position %d: %d != %d",
+				i,
+				gotFirst,
+				gotSecond,
+			)
+		}
+	}
+}
+
+func TestNewEngineWithTopologyAndSeedProducesReproducibleRandomSequence(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 2},
+		},
+	}
+
+	first, err := NewEngineWithTopologyAndSeed(1, 1, topology, 42)
+	if err != nil {
+		t.Fatalf("first NewEngineWithTopologyAndSeed() error = %v", err)
+	}
+
+	second, err := NewEngineWithTopologyAndSeed(1, 1, topology, 42)
+	if err != nil {
+		t.Fatalf("second NewEngineWithTopologyAndSeed() error = %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		gotFirst := first.rng.Int63()
+		gotSecond := second.rng.Int63()
+
+		if gotFirst != gotSecond {
+			t.Fatalf(
+				"random values differ at position %d: %d != %d",
+				i,
+				gotFirst,
+				gotSecond,
+			)
+		}
+	}
+}
+
+func TestNewEngineWithDifferentSeedsCanProduceDifferentSequences(t *testing.T) {
+	first, err := NewEngineWithSeed(1, 1, 42)
+	if err != nil {
+		t.Fatalf("first NewEngineWithSeed() error = %v", err)
+	}
+
+	second, err := NewEngineWithSeed(1, 1, 43)
+	if err != nil {
+		t.Fatalf("second NewEngineWithSeed() error = %v", err)
+	}
+
+	different := false
+	for i := 0; i < 10; i++ {
+		if first.rng.Int63() != second.rng.Int63() {
+			different = true
+			break
+		}
+	}
+
+	if !different {
+		t.Fatal("different seeds produced identical sequences across 10 values")
+	}
+}
+
+func TestEngineAppliesProbabilisticPacketLoss(t *testing.T) {
+	tests := []struct {
+		name        string
+		probability float64
+		wantState   RequestState
+	}{
+		{
+			name:        "zero probability never drops",
+			probability: 0,
+			wantState:   RequestSucceeded,
+		},
+		{
+			name:        "certain probability always drops",
+			probability: 1,
+			wantState:   RequestFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topology := Topology{
+				Nodes: []Node{
+					{ID: "client", Type: NodeClient},
+					{ID: "worker", Type: NodeWorker, Capacity: 1},
+				},
+				Connections: []Connection{
+					{
+						From:                  "client",
+						To:                    "worker",
+						Latency:               2,
+						PacketLossProbability: tt.probability,
+					},
+				},
+			}
+
+			engine, err := NewEngineWithTopologyAndSeed(1, 1, topology, 42)
+			if err != nil {
+				t.Fatalf("NewEngineWithTopologyAndSeed() error = %v", err)
+			}
+			if err := engine.ScheduleRoutedArrival("request-1", "client", 0); err != nil {
+				t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+			}
+			if err := engine.Run(); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			request := engine.Requests()["request-1"]
+			if got := request.State(); got != tt.wantState {
+				t.Fatalf("request state = %s, want %s", got, tt.wantState)
+			}
+		})
+	}
+}
+
+func TestEngineProbabilisticPacketLossIsReproducible(t *testing.T) {
+	run := func(seed int64) []RequestState {
+		t.Helper()
+
+		topology := Topology{
+			Nodes: []Node{
+				{ID: "client", Type: NodeClient},
+				{ID: "worker", Type: NodeWorker, Capacity: 1},
+			},
+			Connections: []Connection{
+				{
+					From:                  "client",
+					To:                    "worker",
+					Latency:               1,
+					PacketLossProbability: 0.5,
+				},
+			},
+		}
+
+		engine, err := NewEngineWithTopologyAndSeed(1, 1, topology, seed)
+		if err != nil {
+			t.Fatalf("NewEngineWithTopologyAndSeed() error = %v", err)
+		}
+
+		for i := 0; i < 20; i++ {
+			if err := engine.ScheduleRoutedArrival(
+				fmt.Sprintf("request-%d", i),
+				"client",
+				Tick(i*3),
+			); err != nil {
+				t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+			}
+		}
+
+		if err := engine.Run(); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		states := make([]RequestState, 20)
+		for i := range states {
+			states[i] = engine.Requests()[fmt.Sprintf("request-%d", i)].State()
+		}
+		return states
+	}
+
+	first := run(42)
+	second := run(42)
+
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf(
+				"request %d state differs for identical seeds: %s vs %s",
+				i,
+				first[i],
+				second[i],
+			)
+		}
+	}
+}
+
+func TestEngineAppliesProbabilisticPacketLossWithLegacyConstructor(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{
+				From:                  "client",
+				To:                    "worker",
+				Latency:               1,
+				PacketLossProbability: 1,
+			},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 1, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.ScheduleRoutedArrival("req-legacy", "client", 0); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	request, exists := engine.Requests()["req-legacy"]
+	if !exists {
+		t.Fatal("request req-legacy not found")
+	}
+	if request.State() != RequestFailed {
+		t.Errorf("request state = %v, want %v", request.State(), RequestFailed)
+	}
+}
+
+func TestPriorityQueueRemovalPreservesRemainingOrder(t *testing.T) {
+	tests := []struct {
+		name          string
+		terminalState RequestState
+		scheduleEvent func(*Engine, string, Tick) error
+	}{
+		{
+			name:          "timeout",
+			terminalState: RequestTimedOut,
+			scheduleEvent: func(e *Engine, id string, at Tick) error {
+				return e.ScheduleTimeout(id, at)
+			},
+		},
+		{
+			name:          "cancellation",
+			terminalState: RequestCancelled,
+			scheduleEvent: func(e *Engine, id string, at Tick) error {
+				return e.ScheduleCancel(id, at)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := NewEngine(1, 10)
+			if err != nil {
+				t.Fatalf("NewEngine() error = %v", err)
+			}
+			if err := engine.SetSchedulingPolicy(SchedulingPriority); err != nil {
+				t.Fatalf("SetSchedulingPolicy() error = %v", err)
+			}
+
+			if err := engine.ScheduleArrival("blocker", 0); err != nil {
+				t.Fatal(err)
+			}
+
+			arrivals := []struct {
+				id       string
+				priority int
+			}{
+				{id: "low", priority: 1},
+				{id: "high", priority: 10},
+				{id: "medium", priority: 5},
+			}
+
+			for _, arrival := range arrivals {
+				if err := engine.ScheduleArrivalWithPriority(
+					arrival.id, 1, arrival.priority,
+				); err != nil {
+					t.Fatalf("schedule %s: %v", arrival.id, err)
+				}
+			}
+
+			// Remove the highest-priority request while it is waiting.
+			if err := tt.scheduleEvent(engine, "high", 3); err != nil {
+				t.Fatalf("schedule terminal event: %v", err)
+			}
+
+			if err := engine.Run(); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			requests := engine.Requests()
+			if got := requests["high"].State(); got != tt.terminalState {
+				t.Errorf("high state = %s, want %s", got, tt.terminalState)
+			}
+
+			wantStart := map[string]Tick{
+				"medium": 10,
+				"low":    20,
+			}
+			for id, want := range wantStart {
+				startedAt, ok := requests[id].StartedAt()
+				if !ok || startedAt != want {
+					t.Errorf(
+						"%s started at (%d, %v), want (%d, true)",
+						id, startedAt, ok, want,
+					)
+				}
+			}
+		})
 	}
 }

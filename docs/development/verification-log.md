@@ -662,3 +662,359 @@ Median of three runs. Times are per operation.
 - CPU and allocation profiles represent sampled costs accumulated over benchmark iterations, not memory retained at one time.
 - Race-detector verification remains blocked by the local compiler toolchain.
 - Hosted CI remains unverified because no Git remote is configured.
+
+## HTTP API and Browser Workflow Milestone
+
+**Date:** 2026-10-16
+
+### Verification
+
+- `go test ./... -count=1` — passed for the CLI, API, and simulation packages. Go package discovery also included `web/node_modules/flatted/golang/pkg/flatted`, which reported no test files.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `npm test` (from `web/`) — passed; 1 test file, 5 tests, including loading-state behavior.
+- `npm run lint` (from `web/`) — passed.
+- `npm run build` (from `web/`) — passed; TypeScript compilation and Vite production build completed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+- Frontend tests cover defaults, successful submissions, API errors/retry, loading state, and arrival editing.
+
+### Scope and limitations
+
+- The Go API exposes health and simulation endpoints; the browser client submits scenarios and displays results or errors.
+- Hosted CI, production deployment, persistence, authentication, full browser end-to-end coverage, and successful race-detector verification are not established by these checks.
+- The local race-detector limitation and lack of configured Git remote remain as previously recorded.
+- These checks establish a passing local build and test milestone, not production readiness or performance claims.
+
+### Manual end-to-end smoke test
+
+- Started the Go API server and confirmed `GET /api/v1/health` returned `status: ok`.
+- Posted a `smoke-test` scenario directly to `POST /api/v1/simulations`; the API returned a duration of 10 ticks.
+- Started the Vite development server and loaded the browser dashboard.
+- Submitted `api-smoke-test` through the UI with service capacity 1, service duration 5, and two arrivals at ticks 0 and 1.
+- Confirmed the UI displayed `COMPLETED`, 2 total requests, 2 succeeded, 0 failed, 0 cancelled, 7.00 average end-to-end latency, and 5.00 average service latency.
+- Scope: one local happy-path scenario; this is manual smoke coverage, not automated browser E2E coverage.
+- Metric clarification: the live API reports `workerUtilization: 0` after this scenario completes because the metric is a final-state snapshot of busy workers divided by service capacity. The earlier 75% value was not confirmed by the live API and should not be interpreted as average utilization over the simulation.
+
+### Automated browser E2E verification
+
+- Added Playwright with Chromium and a dedicated `npm run test:e2e` script.
+- Configured Playwright to launch the Vite development server; the Go API must be running separately at `127.0.0.1:8080`.
+- Added a browser test that submits the default scenario through the dashboard and verifies the successful API response, completion state, request counts, latency values, and final-state worker utilization.
+- `npm run test:e2e` — passed, 1 test.
+- `npm test` — passed, 5 unit tests; Vitest excludes the Playwright `e2e/` directory.
+- `npm run lint` — passed.
+- `npm run build` — passed.
+- Playwright test results, reports, and traces are excluded by `web/.gitignore`.
+- Scope: one automated Chromium happy-path test against the local Go API; this does not establish cross-browser coverage or production readiness.
+
+### API Error-Response Contract Follow-up
+
+**Date:** 2026-10-16
+
+- Strengthened invalid simulation-request tests to verify the JSON content type and a non-empty `error` message, in addition to the HTTP status.
+- Added a reusable `assertJSONError` test helper.
+- Verified JSON error responses for oversized request bodies, unsupported endpoint methods, and unknown routes.
+- `go test ./internal/api -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+**Scope and limitations:** These checks verify the local API error-response contract. They do not establish hosted CI, production deployment, or successful race-detector verification.
+
+### Reproducible Frontend Install and CI Readiness
+
+**Date:** 2026-10-17
+
+- `npm ci` (from `web/`) — passed using the committed `package-lock.json`; npm reported 0 vulnerabilities.
+- `npm test` — passed, 5 tests.
+- `npm run lint` — passed.
+- `npm run build` — passed; TypeScript compilation and Vite production build completed.
+- `npm run test:e2e` — passed, 1 Playwright Chromium test against the local Go API.
+- The existing GitHub Actions workflow was extended with a frontend job covering dependency installation, unit tests, lint, production build, Chromium installation, and browser integration testing.
+- The Go job retains formatting, vet, race-detector, and build checks.
+
+**Scope and limitations:** Frontend checks passed locally after a clean dependency installation. The complete GitHub Actions workflow has not yet been verified on a hosted runner. Hosted race-detector results remain unverified, and local race-detector execution is still blocked by the available Windows compiler toolchain. No production deployment or production-readiness claim is made.
+
+
+### Simulation Resource Limits and Event Budget
+
+**Date:** 2026-10-17
+
+- Added scenario limits for arrivals (10,000), aggregate scheduled events (30,000), topology nodes (1,000), topology connections (5,000), service capacity (10,000), and permitted service duration/scheduled ticks (1,000,000,000).
+- Restricted retry policies to at most 100 retries.
+- Added a runtime processed-event budget of 1,000,000 per engine, with a regression test confirming that the exhausted budget remains enforced across repeated `Run()` calls.
+- Added tests for scenario resource limits, topology size limits, retry boundaries, aggregate scheduled events, and runtime event-budget exhaustion.
+
+**Scope and limitations:** Resource limits are engineering guardrails, not measured capacity guarantees. The full local Go test suite, vet, and build passed after the latest event-budget regression test was added. Hosted CI and production readiness remain unverified.
+
+### Frontend API Response Validation
+
+**Date:** 2026-10-17
+
+- Added runtime validation for successful simulation API responses, including the result, summary, latency metrics, simulation metrics, and per-worker metrics.
+- Invalid successful responses now produce a clear `Invalid simulation response received from API` error instead of being returned as trusted simulation data.
+- Preserved API-provided error messages for unsuccessful HTTP responses.
+- Added direct API-client tests for valid responses, malformed response structures, non-object responses, and API error handling.
+- `npm test` — passed, 9 tests across 2 files.
+- `npm run lint` — passed.
+- `npm run build` — passed, including TypeScript compilation and Vite production build.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+**Scope and limitations:** Validation checks response structure and primitive types; it does not prove semantic consistency between metric values. No commit or push was performed.
+
+
+### Frontend API Request Timeouts
+
+**Date:** 2026-10-17
+
+- Added a 30-second timeout to simulation API requests using `AbortController`.
+- Requests are aborted when the timeout expires, and the timeout timer is cleared when the request finishes.
+- Timeout failures return a clear error message while preserving the original error as the cause.
+- Added a deterministic timeout test using Vitest fake timers.
+- `npm test` — passed, 10 tests across 2 files.
+- `npm run lint` — passed.
+- `npm run build` — passed, including TypeScript compilation and Vite production build.
+
+**Scope and limitations:** Timeout behavior is verified in frontend unit tests. A client-side timeout does not guarantee that the backend stops processing the simulation; server-side cancellation and resource cleanup must be verified separately. Hosted CI and production behavior remain unverified.
+
+### Backend Simulation Cancellation and Execution Deadlines
+
+**Date:** 2026-10-17
+
+- Added `Engine.RunContext(ctx)` to allow simulation event processing to stop when its context is cancelled or its deadline expires. The existing `Run()` method remains available.
+- Added `RunScenarioContext(ctx, scenario)` and preserved `RunScenario(scenario)` as a backwards-compatible wrapper.
+- Updated the HTTP simulation handler to propagate request cancellation into the simulation engine.
+- Added a configurable server-side simulation execution timeout, defaulting to 25 seconds. Execution deadline errors return HTTP `504 Gateway Timeout`; invalid scenarios continue to return HTTP `400 Bad Request`.
+- Added tests for cancelled scenario contexts, cancelled HTTP requests, and HTTP execution timeouts.
+- Restored the `EventRequestRetry` and unsupported-event handling cases during the `RunContext` refactor after regression tests exposed the missing retry-event processing.
+- Targeted retry regression tests — passed, all 6 previously failing tests.
+- `go test ./internal/api -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+**Scope and limitations:** Context cancellation is cooperative and checked between simulation events; it does not interrupt an event handler midway through execution. The timeout and cancellation behavior has been verified locally. Hosted CI, production deployment, and production readiness remain unverified. No commit or push was performed.
+
+### Mid-Execution Cancellation Regression Test
+
+**Date:** 2026-10-17
+
+- Added a deterministic test that cancels the simulation context after the engine processes its first event.
+- Verified that `RunContext` returns an error matching `context.Canceled` and leaves the next scheduled event unprocessed.
+- The test uses a custom context wrapper to trigger cancellation at a predictable check, avoiding sleep-based timing.
+- Related cancellation and retry regression tests — passed.
+- `go test ./internal/sim -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+**Scope and limitations:** This verifies cooperative cancellation between events. It does not demonstrate interruption of an event handler while that handler is executing. No production-code changes, commits, or pushes were made for this test-only step.
+
+### Concurrent API Simulation Requests
+
+**Date:** 2026-10-17
+
+- Added an in-process HTTP concurrency test for `POST /api/v1/simulations`.
+- Tested 12 concurrent requests, each submitting a separate simulation with 20 arrivals.
+- Verified successful HTTP responses, simulation-name isolation, and expected total and successful request counts.
+- Fixed the test's start barrier to use a closed channel, ensuring all worker goroutines start together without a `WaitGroup` synchronization race.
+- `go test ./internal/api -run TestRunSimulationHandlesConcurrentRequests -count=10 -timeout=30s` — passed, 10 consecutive runs.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+**Scope and limitations:** This is a repeatable in-process concurrency correctness test, not a throughput benchmark or a guarantee of production capacity. It does not test network-level load, sustained traffic, or behavior under production deployment conditions. No production-code changes, commits, or pushes were made for this test-only step.
+
+### Standalone HTTP API Load Benchmark
+
+**Date:** 2026-10-17
+
+- Added a standalone Go benchmark command under `cmd/netarena-bench/`, using only the Go standard library.
+- Added configurable API URL, measured requests per concurrency level, arrivals per simulation, request timeout, and repetitions (`-runs`, default 3).
+- Each concurrency level (1, 4, and 8) performs one warm-up request followed by the configured number of measured batches.
+- Measures throughput, end-to-end HTTP latency through complete response-body reading, p50/p95 latency, HTTP errors, and invalid simulation responses.
+- Aggregates throughput, p50, and p95 using medians across measured batches; error counts are cumulative across those batches.
+- Added tests for percentile calculation, response validation, and batch-summary calculations, including HTTP failures, invalid responses, and zero elapsed time.
+- Fixed response-body and JSON-decoding error classification.
+- Invalid benchmark arguments now produce a non-zero process exit code; verified with `go run .\cmd\netarena-bench -requests 0` returning exit code 1.
+- Failed requests print request-level diagnostics, including HTTP status or transport/body/JSON errors when available.
+- `go test ./cmd/netarena-bench -count=1` — passed.
+- `go vet ./cmd/netarena-bench` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Windows line-ending warnings only.
+
+**Three-run local benchmark summary:** Each run used 20 measured requests per concurrency level and 20 arrivals per simulation against `127.0.0.1:18080`. Values below are medians across three measured batches per concurrency level.
+
+| Concurrency | Median throughput (req/s) | Median p50 (ms) | Median p95 (ms) | HTTP errors across runs | Invalid results across runs |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 1,061.93 | 0.59 | 1.35 | 0 | 0 |
+| 4 | 2,639.92 | 1.16 | 2.51 | 0 | 0 |
+| 8 | 4,521.72 | 1.15 | 3.09 | 0 | 0 |
+
+**Scope and limitations:** All three measured batches at each concurrency level completed without HTTP errors or invalid simulation results. Concurrency 8 had the highest median throughput in this sample, but these are preliminary local measurements from a small workload, not production capacity figures. Results may vary with host load and runtime conditions. The benchmark does not test sustained load, remote network conditions, deployment infrastructure, or production traffic patterns. No commit or push was performed.
+
+### Deterministic per-connection packet drops
+
+**Date:** 2026-10-17
+
+**Implementation**
+- Added `Connection.DropPackets` to configure deterministic packet loss on an individual directed connection.
+- The router preserves the setting and returns the selected connection's drop status to the simulation engine.
+- When a request selects a connection with `DropPackets: true`, the request fails immediately with a connection-specific failure reason. This is a deterministic, all-packets-dropped fault model; probabilistic loss, retransmission, and packet-level TCP behavior are not implemented.
+- The default `false` value preserves normal routing behavior.
+
+**Regression coverage**
+- Topology validation accepts a connection configured for packet drops.
+- Router tests verify configuration preservation and returned drop status.
+- Engine tests verify dropped-request failure, unchanged normal routing, and accumulated latency across a multi-hop route.
+
+**Verification**
+- `gofmt -w .\internal\sim\engine.go` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed; Git emitted Windows LF-to-CRLF warnings only.
+
+**Limitations**
+- Packet loss is currently a binary per-connection setting, not a configurable probability.
+- A dropped request fails at the current simulation tick; connection latency is not incurred before the failure.
+- Race-detector verification remains blocked by the local compiler limitation. Hosted CI remains unverified because no Git remote is configured.
+
+### Seeded random-number generator foundation
+
+**Date:** 2026-10-17
+
+**Implementation**
+- Added `NewEngineWithSeed` and `NewEngineWithTopologyAndSeed` constructors to initialize an engine-local pseudo-random number generator from an explicit `int64` seed.
+- Added `Scenario.Seed` and wired scenario execution through the seeded constructors, for both topology and non-topology scenarios.
+- Kept the existing engine constructors available for backward compatibility.
+
+**Regression coverage**
+- Engine tests verify that engines initialized with the same seed produce identical random-number sequences.
+- A different-seed test verifies that the tested seeds produce different sequences.
+- A topology-based constructor test verifies reproducibility with the same seed.
+- A scenario test verifies identical results when the same scenario and seed are run twice.
+
+**Verification**
+- `gofmt -w .\internal\sim\engine_test.go` — passed.
+- `go test ./internal/sim -run 'TestNewEngineWith(TopologyAnd)?Seed|TestNewEngineWithDifferentSeeds' -count=1` — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Git emitted Windows LF-to-CRLF warnings only.
+
+**Limitations**
+- The seeded generator is now used for probabilistic per-connection packet-loss decisions; see the subsequent "Probabilistic per-connection packet loss" section.
+- Reproducibility depends on the same seed, inputs, and random-number call sequence. Changes to RNG consumption can change subsequent outcomes.
+- Race-detector verification remains blocked by the local compiler limitation. Hosted CI remains unverified because no Git remote is configured.
+
+
+### Probabilistic per-connection packet loss
+
+**Date:** 2026-10-17
+
+**Implementation**
+- Added `Connection.PacketLossProbability` to configure probabilistic packet loss independently for each directed connection.
+- Topology validation accepts probabilities from `0` through `1`, inclusive, and rejects negative values, values above `1`, `NaN`, and positive or negative infinity.
+- The router carries the selected connection's loss probability and deterministic `DropPackets` setting to the engine through a shared link-selection helper.
+- The engine uses its local RNG to evaluate probabilistic loss. Seeded constructors provide reproducible outcomes; legacy constructors initialize an RNG automatically.
+- A zero probability consumes no random draw. Deterministically dropped packets and zero-probability links also avoid unnecessary RNG consumption.
+- A dropped request fails immediately with a connection-specific failure reason. This models connection-level routing loss, not packet-level TCP retransmission or recovery.
+
+**Regression coverage**
+- Topology tests cover valid boundary and intermediate probabilities, negative values, values above `1`, `NaN`, and infinities.
+- Engine tests verify zero-probability success, certain loss at probability `1`, seeded reproducibility, and probabilistic loss through the legacy constructor.
+- Existing deterministic-drop and normal-routing tests continue to pass.
+- Router selection logic is shared to avoid duplicating availability filtering and round-robin behavior.
+
+**Verification**
+- Focused packet-loss, seeded-RNG, and router tests — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Git emitted Windows LF-to-CRLF warnings only.
+
+**Limitations**
+- Probabilistic loss is applied when a request selects a connection; it does not model individual packets, TCP retransmission, or recovery.
+- Reproducibility depends on the same seed, inputs, and random-number call sequence. Changes to RNG consumption can change subsequent outcomes.
+- Race-detector verification remains blocked by the local compiler limitation. Hosted CI remains unverified because no Git remote is configured.
+
+### FIFO and priority scheduling
+
+**Date:** 2026-10-18
+
+**Implementation**
+- Added validated `SchedulingFIFO` and `SchedulingPriority` policies. FIFO remains the default for backward compatibility.
+- Added request priorities. Higher integer values represent higher priority; existing arrival methods continue assigning priority `0`.
+- Added priority-aware arrival methods for both standard and topology-aware engines.
+- Added scenario-level scheduling policy configuration and per-arrival priority.
+- Added stable priority insertion for basic-engine queues and topology worker queues. Higher-priority requests are selected first, and equal-priority requests retain FIFO ordering.
+- Applied the same insertion behavior to normal queueing, offline-worker queues, and retry queueing.
+- Prevented scheduling-policy changes after event processing begins, avoiding inconsistent ordering when a policy changes while requests are already queued.
+
+**Regression coverage**
+- Tests cover supported and unsupported policies, default FIFO behavior, priority-aware arrivals, stable ordering, and policy changes after processing begins.
+- Scenario tests verify policy validation and observable behavior under contention.
+- Routing tests verify priority ordering after worker recovery and preservation of priority across retries.
+- Existing FIFO, recovery, retry, and simulation tests continue to pass.
+
+**Verification**
+- Focused scheduling, scenario, recovery, and retry tests — passed.
+- `go test ./... -count=1` — passed.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — no whitespace errors; Git emitted Windows LF-to-CRLF warnings only.
+
+**Limitations**
+- Scheduling is non-preemptive: a running request is not interrupted when a higher-priority request arrives.
+- Priority scheduling does not include aging or starvation prevention; sustained high-priority arrivals may delay low-priority requests.
+- Race-detector verification remains blocked by the local compiler limitation. Hosted CI remains unverified because no Git remote is configured.
+
+## Browser Workflow: Routing Algorithm and Route Visualization
+
+**Date:** 2026-10-18
+
+**Implemented**
+- Added routing-algorithm selection and shortest-path configuration to the browser workflow.
+- Added route-trace visualization for simulation results.
+- Added client-side validation for topology node IDs, node types and capacities, connection references, latency, packet-loss probability, and duplicate directed connections.
+- Required a network topology when shortest-path routing is selected.
+- Added stable React keys for topology editor rows and node options, independent of editable node IDs.
+- Added regression tests covering duplicate node IDs, topology node addition/removal and row identity, and shortest-path topology requirements.
+
+**Frontend verification**
+- `npm test -- --run` — passed; 2 test files and 14 tests passed.
+- `npm run build` — passed; TypeScript compilation and Vite production build completed successfully.
+
+**Verification scope and remaining limitations**
+- The full Go test suite, `go vet ./...`, `go build ./...`, frontend tests, frontend production build, frontend lint, and `git diff --check` have passed.
+- The architecture overview and testing strategy have been reviewed and updated for the implemented browser workflow.
+- Full browser end-to-end verification, hosted CI, and successful race-detector verification remain unverified or blocked by the previously documented environment limitations.
+- `go list ./...` discovers a third-party package under `web/node_modules/flatted/golang/pkg/flatted`. Its discovery has not been resolved; the Go checks passed despite it.
+
+**Final verification update — 2026-10-18**
+
+**Additional checks**
+- `go test ./... -count=1` — passed across discovered Go packages.
+- `go vet ./...` — passed.
+- `go build ./...` — passed.
+- `git diff --check` — passed with no whitespace errors. Git emitted LF-to-CRLF line-ending warnings on Windows.
+- `npm run lint` — passed with no ESLint errors.
+
+**Review notes**
+- `go list ./...` also discovers `web/node_modules/flatted/golang/pkg/flatted`, a third-party package inside frontend dependencies. Its origin is confirmed; the reason for Go's discovery has not yet been resolved. The Go checks passed despite this.
+- The working tree contains modified tracked files, untracked implementation files, and backup files. These have not been staged or committed.
+- Hosted CI and race-detector verification remain unverified or blocked by the previously documented environment limitations.
+
+**Browser end-to-end verification — 2026-10-18**
+
+- Started the Go API locally with `go run ./cmd/netarena-server`.
+- `Invoke-RestMethod http://127.0.0.1:8080/api/v1/health` — passed; returned `status: ok`.
+- `npm run test:e2e` from `web/` — passed; 1 Playwright test verified scenario submission to the Go API and displayed simulation results.
+- The initial E2E attempt failed because the API was not running. After starting the API, the test passed.

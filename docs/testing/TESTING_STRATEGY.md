@@ -1,8 +1,10 @@
-﻿# NetArena Testing Strategy
+# NetArena Testing Strategy
 
-**Status:** Test strategy established; the Go CLI has a focused unit test, and the initial Go CI checks are defined.
+**Status:** Go simulation and HTTP API tests, plus frontend component/workflow tests, are implemented. Broader integration, security, concurrency, and end-to-end coverage remains planned.
 
-The CLI unit test verifies its startup output. It is not evidence for simulation, API, persistence, frontend, or concurrency behavior; those tests remain future work.
+The current test suite covers the Go simulation and API, along with frontend defaults, successful submissions, loading and error states, arrival editing, topology node validation and lifecycle, shortest-path topology requirements, and route-trace display. The frontend production build and lint checks have also passed for the current milestone.
+
+The frontend uses Vitest and Testing Library. These tests do not establish that persistence, authentication, multiplayer, browser end-to-end behavior, or production concurrency have been verified.
 
 Testing is a dedicated workstream from the first engine package through deployment.
 
@@ -27,4 +29,4 @@ Testing is a dedicated workstream from the first engine package through deployme
 - Performance claims require reproducible workloads and environment details.
 - A race-detector pass is useful but does not prove all concurrency behavior correct.
 - Multiplayer release requires evidence for session isolation, authoritative server state, duplicate/stale message handling, reconnect semantics, security, and tested capacity.
-- The current Go CLI startup behavior has a passing focused unit test. Engine, API, persistence, frontend, integration, and meaningful concurrency tests do not exist yet; do not infer their status from the CLI test.
+- Go tests cover implemented simulation and API behavior, and frontend tests cover the current browser workflow. Persistence and authentication tests, full browser end-to-end tests, hosted CI, and successful race-detector verification are not established by the current milestone. Consult `docs/development/verification-log.md` for recorded commands and results.

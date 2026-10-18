@@ -1,8 +1,30 @@
 package sim
 
 import (
+	"context"
 	"fmt"
 	"strings"
+)
+
+const (
+	// MaxScenarioArrivals is the maximum number of requests in one scenario.
+	MaxScenarioArrivals = 10_000
+
+	// MaxScenarioEvents is the maximum number of explicitly scheduled events
+	// across worker failures, recoveries, timeouts, and cancellations.
+	MaxScenarioEvents = 30_000
+
+	// MaxScenarioTopologyNodes is the maximum number of nodes in a topology.
+	MaxScenarioTopologyNodes = 1_000
+
+	// MaxScenarioTopologyConnections is the maximum number of connections in a topology.
+	MaxScenarioTopologyConnections = 5_000
+
+	// MaxScenarioServiceCapacity is the maximum service capacity.
+	MaxScenarioServiceCapacity = 10_000
+
+	// MaxScenarioTick is the maximum permitted service duration or scheduled tick.
+	MaxScenarioTick = 1_000_000_000
 )
 
 // ScenarioArrival defines a request arrival in a simulation scenario.
@@ -10,6 +32,7 @@ type ScenarioArrival struct {
 	RequestID  string
 	SourceNode string
 	At         Tick
+	Priority   int
 }
 
 // ScenarioWorkerEvent defines a scheduled worker failure or recovery.
@@ -32,10 +55,13 @@ type ScenarioCancellation struct {
 
 // Scenario describes a deterministic simulation run.
 type Scenario struct {
-	Name            string
-	ServiceCapacity int
-	ServiceDuration Tick
-	Topology        Topology
+	Name             string
+	Seed             int64
+	ServiceCapacity  int
+	ServiceDuration  Tick
+	SchedulingPolicy SchedulingPolicy
+	RoutingAlgorithm RoutingAlgorithm
+	Topology         Topology
 
 	Arrivals         []ScenarioArrival
 	WorkerFailures   []ScenarioWorkerEvent
@@ -49,16 +75,55 @@ type Scenario struct {
 
 // ScenarioResult contains the outputs of one scenario execution.
 type ScenarioResult struct {
-	Name     string
-	Duration Tick
-	Summary  RunSummary
-	Metrics  Metrics
+	Name        string
+	Duration    Tick
+	Summary     RunSummary
+	Metrics     Metrics
+	RouteTraces map[string][]RouteTraceHop
 }
 
 // Validate checks the scenario configuration before execution.
 func (s Scenario) Validate() error {
 	if strings.TrimSpace(s.Name) == "" {
 		return fmt.Errorf("scenario name must not be empty")
+	}
+	if s.SchedulingPolicy != "" {
+		if err := s.SchedulingPolicy.Validate(); err != nil {
+			return fmt.Errorf("invalid scheduling policy: %w", err)
+		}
+	}
+	if s.RoutingAlgorithm != "" {
+		if err := s.RoutingAlgorithm.Validate(); err != nil {
+			return fmt.Errorf("invalid routing algorithm: %w", err)
+		}
+	}
+	if s.ServiceCapacity > MaxScenarioServiceCapacity {
+		return fmt.Errorf(
+			"service capacity %d exceeds maximum %d",
+			s.ServiceCapacity,
+			MaxScenarioServiceCapacity,
+		)
+	}
+	if s.ServiceDuration > MaxScenarioTick {
+		return fmt.Errorf(
+			"service duration %d exceeds maximum tick %d",
+			s.ServiceDuration,
+			MaxScenarioTick,
+		)
+	}
+	if len(s.Arrivals) > MaxScenarioArrivals {
+		return fmt.Errorf(
+			"arrival count %d exceeds maximum %d",
+			len(s.Arrivals),
+			MaxScenarioArrivals,
+		)
+	}
+	if len(s.WorkerFailures)+len(s.WorkerRecoveries)+
+		len(s.Timeouts)+len(s.Cancellations) > MaxScenarioEvents {
+		return fmt.Errorf(
+			"scheduled event count exceeds maximum %d",
+			MaxScenarioEvents,
+		)
 	}
 	if s.ServiceCapacity <= 0 {
 		return fmt.Errorf("service capacity must be positive")
@@ -77,6 +142,14 @@ func (s Scenario) Validate() error {
 		}
 		if arrival.At < 0 {
 			return fmt.Errorf("arrival %q has a negative tick", arrival.RequestID)
+		}
+		if arrival.At > MaxScenarioTick {
+			return fmt.Errorf(
+				"arrival %q tick %d exceeds maximum %d",
+				arrival.RequestID,
+				arrival.At,
+				MaxScenarioTick,
+			)
 		}
 		if _, exists := seen[arrival.RequestID]; exists {
 			return fmt.Errorf("duplicate arrival request ID %q", arrival.RequestID)
@@ -104,7 +177,9 @@ func (s Scenario) Validate() error {
 			}
 		}
 	}
-
+	if s.RoutingAlgorithm == RoutingShortestPath && !topologyConfigured {
+		return fmt.Errorf("shortest-path routing requires a topology")
+	}
 	if err := s.RetryPolicy.Validate(); err != nil {
 		return fmt.Errorf("invalid retry policy: %w", err)
 	}
@@ -146,6 +221,9 @@ func (s Scenario) validateWorkerEvent(event ScenarioWorkerEvent) error {
 	if event.At < 0 {
 		return fmt.Errorf("worker event tick must not be negative")
 	}
+	if event.At > MaxScenarioTick {
+		return fmt.Errorf("worker event tick exceeds maximum %d", MaxScenarioTick)
+	}
 	if strings.TrimSpace(event.WorkerID) == "" {
 		return fmt.Errorf("worker event ID must not be empty")
 	}
@@ -169,6 +247,9 @@ func (s Scenario) validateRequestEvent(requestID string, at Tick, kind string) e
 	}
 	if at < 0 {
 		return fmt.Errorf("%s tick must not be negative", kind)
+	}
+	if at > MaxScenarioTick {
+		return fmt.Errorf("%s tick exceeds maximum %d", kind, MaxScenarioTick)
 	}
 
 	for _, arrival := range s.Arrivals {
@@ -203,24 +284,47 @@ func containsNode(topology Topology, nodeID string) bool {
 
 // RunScenario validates, configures, and executes a scenario deterministically.
 func RunScenario(s Scenario) (ScenarioResult, error) {
+	return RunScenarioContext(context.Background(), s)
+}
+
+// RunScenarioContext validates and executes a scenario until completion or context cancellation.
+func RunScenarioContext(ctx context.Context, s Scenario) (ScenarioResult, error) {
+	if ctx == nil {
+		return ScenarioResult{}, fmt.Errorf("simulation context must not be nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return ScenarioResult{}, err
+	}
 	if err := s.Validate(); err != nil {
 		return ScenarioResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return ScenarioResult{}, err
+	}
 
-	return runValidatedScenario(s)
+	return runValidatedScenario(ctx, s)
 }
 
 // runValidatedScenario executes a scenario that has already passed validation.
-func runValidatedScenario(s Scenario) (ScenarioResult, error) {
+func runValidatedScenario(ctx context.Context, s Scenario) (ScenarioResult, error) {
 	var (
 		engine *Engine
 		err    error
 	)
 
 	if len(s.Topology.Nodes) > 0 || len(s.Topology.Connections) > 0 {
-		engine, err = NewEngineWithTopology(s.ServiceCapacity, s.ServiceDuration, s.Topology)
+		engine, err = NewEngineWithTopologyAndSeed(
+			s.ServiceCapacity,
+			s.ServiceDuration,
+			s.Topology,
+			s.Seed,
+		)
 	} else {
-		engine, err = NewEngine(s.ServiceCapacity, s.ServiceDuration)
+		engine, err = NewEngineWithSeed(
+			s.ServiceCapacity,
+			s.ServiceDuration,
+			s.Seed,
+		)
 	}
 	if err != nil {
 		return ScenarioResult{}, err
@@ -237,6 +341,23 @@ func runValidatedScenario(s Scenario) (ScenarioResult, error) {
 	if err := engine.SetRetryPolicy(s.RetryPolicy); err != nil {
 		return ScenarioResult{}, err
 	}
+	schedulingPolicy := s.SchedulingPolicy
+	if schedulingPolicy == "" {
+		schedulingPolicy = SchedulingFIFO
+	}
+	if err := engine.SetSchedulingPolicy(schedulingPolicy); err != nil {
+		return ScenarioResult{}, err
+	}
+	if len(s.Topology.Nodes) > 0 || len(s.Topology.Connections) > 0 {
+		routingAlgorithm := s.RoutingAlgorithm
+		if routingAlgorithm == "" {
+			routingAlgorithm = RoutingRoundRobin
+		}
+
+		if err := engine.SetRoutingAlgorithm(routingAlgorithm); err != nil {
+			return ScenarioResult{}, err
+		}
+	}
 	if s.CircuitBreaker != nil {
 		if err := engine.SetCircuitBreakerPolicy(*s.CircuitBreaker); err != nil {
 			return ScenarioResult{}, err
@@ -244,13 +365,29 @@ func runValidatedScenario(s Scenario) (ScenarioResult, error) {
 	}
 
 	for _, arrival := range s.Arrivals {
+		var err error
+
 		if arrival.SourceNode != "" {
-			err = engine.ScheduleRoutedArrival(arrival.RequestID, arrival.SourceNode, arrival.At)
+			err = engine.ScheduleRoutedArrivalWithPriority(
+				arrival.RequestID,
+				arrival.SourceNode,
+				arrival.At,
+				arrival.Priority,
+			)
 		} else {
-			err = engine.ScheduleArrival(arrival.RequestID, arrival.At)
+			err = engine.ScheduleArrivalWithPriority(
+				arrival.RequestID,
+				arrival.At,
+				arrival.Priority,
+			)
 		}
+
 		if err != nil {
-			return ScenarioResult{}, fmt.Errorf("schedule arrival %q: %w", arrival.RequestID, err)
+			return ScenarioResult{}, fmt.Errorf(
+				"schedule arrival %q: %w",
+				arrival.RequestID,
+				err,
+			)
 		}
 	}
 
@@ -278,14 +415,15 @@ func runValidatedScenario(s Scenario) (ScenarioResult, error) {
 		}
 	}
 
-	if err := engine.Run(); err != nil {
+	if err := engine.RunContext(ctx); err != nil {
 		return ScenarioResult{}, fmt.Errorf("run scenario %q: %w", s.Name, err)
 	}
 
 	return ScenarioResult{
-		Name:     s.Name,
-		Duration: engine.CurrentTick(),
-		Summary:  engine.Summary(),
-		Metrics:  engine.Metrics(),
+		Name:        s.Name,
+		Duration:    engine.CurrentTick(),
+		Summary:     engine.Summary(),
+		Metrics:     engine.Metrics(),
+		RouteTraces: engine.RouteTraces(),
 	}, nil
 }

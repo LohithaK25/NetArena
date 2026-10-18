@@ -62,6 +62,7 @@ func (s RequestState) IsTerminal() bool {
 type Request struct {
 	id                      string
 	state                   RequestState
+	priority                int
 	createdAt               Tick
 	queuedAt                Tick
 	startedAt               Tick
@@ -76,8 +77,14 @@ type Request struct {
 	totalServiceTime        Tick
 }
 
-// NewRequest creates a request in the created state.
+// NewRequest creates a request in the created state with default priority 0.
 func NewRequest(id string, createdAt Tick) (*Request, error) {
+	return NewRequestWithPriority(id, createdAt, 0)
+}
+
+// NewRequestWithPriority creates a request with an explicit scheduling priority.
+// Higher values represent higher priority.
+func NewRequestWithPriority(id string, createdAt Tick, priority int) (*Request, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, fmt.Errorf("request ID must not be empty")
 	}
@@ -90,6 +97,7 @@ func NewRequest(id string, createdAt Tick) (*Request, error) {
 		state:            RequestCreated,
 		createdAt:        createdAt,
 		lastTransitionAt: createdAt,
+		priority:         priority,
 	}, nil
 }
 
@@ -103,6 +111,12 @@ func (r *Request) State() RequestState {
 
 func (r *Request) CreatedAt() Tick {
 	return r.createdAt
+}
+
+// Priority returns the request's scheduling priority.
+// Higher values represent higher priority.
+func (r *Request) Priority() int {
+	return r.priority
 }
 
 func (r *Request) QueuedAt() (Tick, bool) {
@@ -236,6 +250,9 @@ func (p RetryPolicy) Validate() error {
 	}
 	if p.Backoff < 0 {
 		return fmt.Errorf("retry backoff must be non-negative")
+	}
+	if p.MaxRetries > 100 {
+		return fmt.Errorf("max retries must not exceed 100")
 	}
 	return nil
 }

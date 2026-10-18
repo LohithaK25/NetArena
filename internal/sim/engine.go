@@ -1,10 +1,14 @@
 package sim
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"strings"
 )
+
+const MaxProcessedEvents = 1_000_000
 
 // Engine runs a deterministic, discrete-event service simulation.
 type Engine struct {
@@ -14,12 +18,14 @@ type Engine struct {
 	nextSequence          uint64
 	serviceCapacity       int
 	serviceDuration       Tick
+	schedulingPolicy      SchedulingPolicy
 	busyWorkers           int
 	waiting               []string
 	router                *Router
 	requestNodes          map[string]string
 	requestSources        map[string]string
 	visitedNodes          map[string]map[string]bool
+	routeTraces           map[string][]RouteTraceHop
 	workerBusy            map[string]int
 	workerWaiting         map[string][]string
 	workerOnline          map[string]bool
@@ -30,6 +36,9 @@ type Engine struct {
 	circuitBreakers       map[string]*circuitBreaker
 	circuitBreakerPolicy  CircuitBreakerPolicy
 	circuitBreakerEnabled bool
+	maxProcessedEvents    int
+	processedEvents       int
+	rng                   *rand.Rand
 }
 
 // NewEngine creates an engine with a fixed service capacity and duration.
@@ -42,21 +51,40 @@ func NewEngine(serviceCapacity int, serviceDuration Tick) (*Engine, error) {
 	}
 
 	return &Engine{
-		queue:           NewEventQueue(),
-		requests:        make(map[string]*Request),
-		serviceCapacity: serviceCapacity,
-		serviceDuration: serviceDuration,
-		requestNodes:    make(map[string]string),
-		requestSources:  make(map[string]string),
-		visitedNodes:    make(map[string]map[string]bool),
-		workerBusy:      make(map[string]int),
-		workerWaiting:   make(map[string][]string),
-		workerOnline:    make(map[string]bool),
-		retryCounts:     make(map[string]int),
-		attemptIDs:      make(map[string]uint64),
-		retryWorkers:    make(map[string]string),
-		circuitBreakers: make(map[string]*circuitBreaker),
+		queue:              NewEventQueue(),
+		requests:           make(map[string]*Request),
+		serviceCapacity:    serviceCapacity,
+		serviceDuration:    serviceDuration,
+		schedulingPolicy:   SchedulingFIFO,
+		requestNodes:       make(map[string]string),
+		requestSources:     make(map[string]string),
+		visitedNodes:       make(map[string]map[string]bool),
+		routeTraces:        make(map[string][]RouteTraceHop),
+		workerBusy:         make(map[string]int),
+		workerWaiting:      make(map[string][]string),
+		workerOnline:       make(map[string]bool),
+		retryCounts:        make(map[string]int),
+		attemptIDs:         make(map[string]uint64),
+		retryWorkers:       make(map[string]string),
+		circuitBreakers:    make(map[string]*circuitBreaker),
+		maxProcessedEvents: MaxProcessedEvents,
+		rng:                rand.New(rand.NewSource(rand.Int63())),
 	}, nil
+}
+
+// NewEngineWithSeed creates an engine with a reproducible random-number stream.
+func NewEngineWithSeed(
+	serviceCapacity int,
+	serviceDuration Tick,
+	seed int64,
+) (*Engine, error) {
+	engine, err := NewEngine(serviceCapacity, serviceDuration)
+	if err != nil {
+		return nil, err
+	}
+
+	engine.rng = rand.New(rand.NewSource(seed))
+	return engine, nil
 }
 
 // NewEngineWithTopology creates an engine configured for topology-aware routing.
@@ -93,12 +121,47 @@ func NewEngineWithTopology(
 	return engine, nil
 }
 
-// ScheduleArrival schedules a request to arrive at a virtual tick.
-func (e *Engine) ScheduleArrival(requestID string, at Tick) error {
-	return e.scheduleArrival(requestID, at, "")
+// NewEngineWithTopologyAndSeed creates a topology-aware engine with a
+// reproducible random-number stream.
+func NewEngineWithTopologyAndSeed(
+	serviceCapacity int,
+	serviceDuration Tick,
+	topology Topology,
+	seed int64,
+) (*Engine, error) {
+	engine, err := NewEngineWithTopology(
+		serviceCapacity,
+		serviceDuration,
+		topology,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	engine.rng = rand.New(rand.NewSource(seed))
+	return engine, nil
 }
 
-func (e *Engine) scheduleArrival(requestID string, at Tick, sourceNode string) error {
+// ScheduleArrival schedules a request to arrive at a virtual tick.
+func (e *Engine) ScheduleArrival(requestID string, at Tick) error {
+	return e.ScheduleArrivalWithPriority(requestID, at, 0)
+}
+
+// ScheduleArrivalWithPriority schedules an arrival with an explicit priority.
+func (e *Engine) ScheduleArrivalWithPriority(
+	requestID string,
+	at Tick,
+	priority int,
+) error {
+	return e.scheduleArrival(requestID, at, "", priority)
+}
+
+func (e *Engine) scheduleArrival(
+	requestID string,
+	at Tick,
+	sourceNode string,
+	priority int,
+) error {
 	if e.router != nil && sourceNode == "" {
 		return fmt.Errorf("topology-aware engine requires a source node")
 	}
@@ -118,7 +181,7 @@ func (e *Engine) scheduleArrival(requestID string, at Tick, sourceNode string) e
 		return fmt.Errorf("event sequence exhausted")
 	}
 
-	request, err := NewRequest(requestID, at)
+	request, err := NewRequestWithPriority(requestID, at, priority)
 	if err != nil {
 		return err
 	}
@@ -143,7 +206,19 @@ func (e *Engine) scheduleArrival(requestID string, at Tick, sourceNode string) e
 }
 
 // ScheduleRoutedArrival schedules a request that begins at a topology node.
-func (e *Engine) ScheduleRoutedArrival(requestID, sourceNode string, at Tick) error {
+func (e *Engine) ScheduleRoutedArrival(
+	requestID, sourceNode string,
+	at Tick,
+) error {
+	return e.ScheduleRoutedArrivalWithPriority(requestID, sourceNode, at, 0)
+}
+
+// ScheduleRoutedArrivalWithPriority schedules a routed arrival with an explicit priority.
+func (e *Engine) ScheduleRoutedArrivalWithPriority(
+	requestID, sourceNode string,
+	at Tick,
+	priority int,
+) error {
 	if e.router == nil {
 		return fmt.Errorf("engine has no topology configured")
 	}
@@ -151,7 +226,7 @@ func (e *Engine) ScheduleRoutedArrival(requestID, sourceNode string, at Tick) er
 		return fmt.Errorf("unknown source node %q", sourceNode)
 	}
 
-	return e.scheduleArrival(requestID, at, sourceNode)
+	return e.scheduleArrival(requestID, at, sourceNode, priority)
 }
 
 // ScheduleWorkerFailure schedules a worker to become unavailable at a virtual tick.
@@ -256,11 +331,31 @@ func (e *Engine) ScheduleCancel(requestID string, at Tick) error {
 
 // Run processes every currently scheduled event.
 func (e *Engine) Run() error {
+	return e.RunContext(context.Background())
+}
+
+// RunContext processes scheduled events until the queue is empty or ctx is cancelled.
+func (e *Engine) RunContext(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("simulation context must not be nil")
+	}
+
 	for e.queue.Len() > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		if e.processedEvents >= e.maxProcessedEvents {
+			return fmt.Errorf(
+				"processed event limit exceeded: maximum %d",
+				e.maxProcessedEvents,
+			)
+		}
 		event, ok := e.queue.Pop()
 		if !ok {
 			return fmt.Errorf("event queue unexpectedly empty")
 		}
+		e.processedEvents++
 		if event.At < e.now {
 			return fmt.Errorf("event tick %d precedes current tick %d", event.At, e.now)
 		}
@@ -296,12 +391,10 @@ func (e *Engine) Run() error {
 			if err := e.handleWorkerRecovery(event.NodeID); err != nil {
 				return err
 			}
-
 		case EventCircuitCooldownElapsed:
 			if err := e.handleCircuitCooldownElapsed(event.NodeID); err != nil {
 				return err
 			}
-
 		case EventRequestRetry:
 			if err := e.handleRequestRetry(event.RequestID); err != nil {
 				return err
@@ -311,7 +404,7 @@ func (e *Engine) Run() error {
 		}
 	}
 
-	return nil
+	return ctx.Err()
 }
 
 // Requests returns independent snapshots of the request registry.
@@ -320,6 +413,15 @@ func (e *Engine) Requests() map[string]*Request {
 	snapshot := make(map[string]*Request, len(e.requests))
 	for id, request := range e.requests {
 		snapshot[id] = request.clone()
+	}
+	return snapshot
+}
+
+// RouteTraces returns independent snapshots of the recorded route traces.
+func (e *Engine) RouteTraces() map[string][]RouteTraceHop {
+	snapshot := make(map[string][]RouteTraceHop, len(e.routeTraces))
+	for requestID, hops := range e.routeTraces {
+		snapshot[requestID] = append([]RouteTraceHop(nil), hops...)
 	}
 	return snapshot
 }
@@ -390,7 +492,7 @@ func (e *Engine) handleArrival(requestID string) error {
 		return e.startService(request)
 	}
 
-	e.waiting = append(e.waiting, requestID)
+	e.waiting = e.enqueueWaitingRequest(e.waiting, requestID)
 	return nil
 }
 
@@ -421,7 +523,7 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 
 	if node.Type == NodeWorker {
 		if !e.workerOnline[nodeID] {
-			e.workerWaiting[nodeID] = append(e.workerWaiting[nodeID], requestID)
+			e.workerWaiting[nodeID] = e.enqueueWaitingRequest(e.workerWaiting[nodeID], requestID)
 			e.requestNodes[requestID] = nodeID
 			return nil
 		}
@@ -432,7 +534,7 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		}
 
 		if e.workerBusy[nodeID] >= capacity {
-			e.workerWaiting[nodeID] = append(e.workerWaiting[nodeID], requestID)
+			e.workerWaiting[nodeID] = e.enqueueWaitingRequest(e.workerWaiting[nodeID], requestID)
 			e.requestNodes[requestID] = nodeID
 			return nil
 		}
@@ -447,19 +549,42 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		return e.startWorkerService(request, nodeID)
 	}
 
-	next, latency, err := e.router.NextHopWithLatencyFiltered(
-		nodeID,
-
-		func(destination Node) bool {
-			if destination.Type != NodeWorker {
-				return true
-			}
-			return e.workerOnline[destination.ID] &&
-				e.circuitAllowsRoute(destination.ID)
-		},
-	)
+	next, latency, dropped, lossProbability, err :=
+		e.router.NextHopWithLinkStatusAndLossProbability(
+			nodeID,
+			func(destination Node) bool {
+				if destination.Type != NodeWorker {
+					return true
+				}
+				return e.workerOnline[destination.ID] &&
+					e.circuitAllowsRoute(destination.ID)
+			},
+		)
 	if err != nil {
 		return e.failQueuedRequest(request, err.Error())
+	}
+
+	probabilisticallyDropped := false
+	if !dropped && lossProbability > 0 {
+		probabilisticallyDropped = e.rng.Float64() < lossProbability
+	}
+
+	if dropped || probabilisticallyDropped {
+		e.routeTraces[requestID] = append(
+			e.routeTraces[requestID],
+			RouteTraceHop{
+				From:    nodeID,
+				To:      next.ID,
+				At:      e.now,
+				Latency: latency,
+				Status:  RouteHopDropped,
+			},
+		)
+
+		return e.failQueuedRequest(
+			request,
+			fmt.Sprintf("packet dropped on connection %q -> %q", nodeID, next.ID),
+		)
 	}
 
 	visited := e.visitedNodes[requestID]
@@ -468,6 +593,17 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 		e.visitedNodes[requestID] = visited
 	}
 	if visited[next.ID] {
+		e.routeTraces[requestID] = append(
+			e.routeTraces[requestID],
+			RouteTraceHop{
+				From:    nodeID,
+				To:      next.ID,
+				At:      e.now,
+				Latency: latency,
+				Status:  RouteHopCycleDetected,
+			},
+		)
+
 		return e.failQueuedRequest(
 			request,
 			fmt.Sprintf("routing cycle detected at node %q", next.ID),
@@ -486,6 +622,17 @@ func (e *Engine) handleRouteHop(requestID, nodeID string) error {
 	}); err != nil {
 		return err
 	}
+
+	e.routeTraces[requestID] = append(
+		e.routeTraces[requestID],
+		RouteTraceHop{
+			From:    nodeID,
+			To:      next.ID,
+			At:      e.now,
+			Latency: latency,
+			Status:  RouteHopForwarded,
+		},
+	)
 
 	visited[next.ID] = true
 	e.requestNodes[requestID] = next.ID
@@ -788,6 +935,34 @@ func (e *Engine) handleTerminalRequest(requestID string, terminalState RequestSt
 	return nil
 }
 
+// enqueueWaitingRequest adds a request to a waiting queue.
+// Under priority scheduling, higher priorities come first and equal priorities
+// retain FIFO order. Other policies retain the existing append behavior.
+func (e *Engine) enqueueWaitingRequest(queue []string, requestID string) []string {
+	if e.schedulingPolicy != SchedulingPriority {
+		return append(queue, requestID)
+	}
+
+	request := e.requests[requestID]
+	if request == nil {
+		return append(queue, requestID)
+	}
+
+	insertAt := len(queue)
+	for i, queuedID := range queue {
+		queuedRequest := e.requests[queuedID]
+		if queuedRequest != nil && queuedRequest.Priority() < request.Priority() {
+			insertAt = i
+			break
+		}
+	}
+
+	queue = append(queue, "")
+	copy(queue[insertAt+1:], queue[insertAt:])
+	queue[insertAt] = requestID
+	return queue
+}
+
 func removeRequestID(queue []string, requestID string) []string {
 	for i, id := range queue {
 		if id == requestID {
@@ -1002,6 +1177,36 @@ func (e *Engine) handleWorkerRecovery(workerID string) error {
 	return nil
 }
 
+// SetSchedulingPolicy configures how queued requests are selected.
+// The policy cannot be changed after event processing begins.
+func (e *Engine) SetSchedulingPolicy(policy SchedulingPolicy) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if e.processedEvents > 0 && policy != e.schedulingPolicy {
+		return fmt.Errorf("cannot change scheduling policy after simulation has started")
+	}
+
+	e.schedulingPolicy = policy
+	return nil
+}
+
+// SetRoutingAlgorithm configures routing before event processing begins.
+func (e *Engine) SetRoutingAlgorithm(algorithm RoutingAlgorithm) error {
+	if e.router == nil {
+		return fmt.Errorf("routing algorithm requires a configured topology")
+	}
+	if err := algorithm.Validate(); err != nil {
+		return fmt.Errorf("invalid routing algorithm: %w", err)
+	}
+	if e.processedEvents > 0 && algorithm != e.router.algorithm {
+		return fmt.Errorf("cannot change routing algorithm after simulation has started")
+	}
+
+	e.router.algorithm = algorithm
+	return nil
+}
+
 // SetRetryPolicy configures the retry behavior for eligible request failures.
 func (e *Engine) SetRetryPolicy(policy RetryPolicy) error {
 	if err := policy.Validate(); err != nil {
@@ -1043,7 +1248,7 @@ func (e *Engine) handleRequestRetry(requestID string) error {
 		if e.busyWorkers < e.serviceCapacity {
 			return e.startService(request)
 		}
-		e.waiting = append(e.waiting, requestID)
+		e.waiting = e.enqueueWaitingRequest(e.waiting, requestID)
 		return nil
 	}
 
@@ -1064,7 +1269,7 @@ func (e *Engine) handleRequestRetry(requestID string) error {
 	}
 
 	if !e.workerOnline[workerID] {
-		e.workerWaiting[workerID] = append(e.workerWaiting[workerID], requestID)
+		e.workerWaiting[workerID] = e.enqueueWaitingRequest(e.workerWaiting[workerID], requestID)
 		e.requestNodes[requestID] = workerID
 		return nil
 	}

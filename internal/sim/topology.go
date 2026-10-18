@@ -1,6 +1,9 @@
 package sim
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // NodeType identifies the role of a component in the simulated topology.
 type NodeType uint8
@@ -38,9 +41,11 @@ type Node struct {
 
 // Connection is a directed link between two topology nodes.
 type Connection struct {
-	From    string
-	To      string
-	Latency Tick
+	From                  string
+	To                    string
+	Latency               Tick
+	DropPackets           bool
+	PacketLossProbability float64
 }
 
 // Topology describes the nodes and directed connections in a simulation.
@@ -51,6 +56,20 @@ type Topology struct {
 
 // Validate checks topology identifiers, node types, and connection endpoints.
 func (t Topology) Validate() error {
+	if len(t.Nodes) > MaxScenarioTopologyNodes {
+		return fmt.Errorf(
+			"topology node count %d exceeds maximum %d",
+			len(t.Nodes),
+			MaxScenarioTopologyNodes,
+		)
+	}
+	if len(t.Connections) > MaxScenarioTopologyConnections {
+		return fmt.Errorf(
+			"topology connection count %d exceeds maximum %d",
+			len(t.Connections),
+			MaxScenarioTopologyConnections,
+		)
+	}
 	nodes := make(map[string]Node, len(t.Nodes))
 
 	for _, node := range t.Nodes {
@@ -87,6 +106,17 @@ func (t Topology) Validate() error {
 				"connection from %q to %q has negative latency",
 				connection.From,
 				connection.To,
+			)
+		}
+		if math.IsNaN(connection.PacketLossProbability) ||
+			math.IsInf(connection.PacketLossProbability, 0) ||
+			connection.PacketLossProbability < 0 ||
+			connection.PacketLossProbability > 1 {
+			return fmt.Errorf(
+				"connection from %q to %q has invalid packet-loss probability %v: must be between 0 and 1",
+				connection.From,
+				connection.To,
+				connection.PacketLossProbability,
 			)
 		}
 		if connection.From == connection.To {

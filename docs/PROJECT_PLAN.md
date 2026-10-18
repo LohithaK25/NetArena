@@ -1,7 +1,7 @@
 # NetArena — Project Handbook & Engineering Journal
 
-> **Document status:** Initial planning baseline
-> **Project status:** Not yet implemented; repository setup and implementation milestones are pending
+> **Document status:** Active engineering handbook; implementation and verification records updated through the HTTP API and browser workflow milestone
+> **Project status:** Deterministic simulation engine, Go CLI, HTTP API, and initial React/TypeScript browser workflow implemented; broader game and production capabilities remain planned
 > **Purpose:** Single source of truth for the project vision, architecture, implementation decisions, testing, deployment, and the reasoning needed to explain the project in interviews.
 
 ---
@@ -838,12 +838,12 @@ Status: Planned / In progress / Implemented / Verified / Blocked
 ### Initial baseline
 
 - **Project planning:** Documented in this handbook.
-- **Repository:** Not yet inspected or created in this work.
-- **Code implementation:** Not started.
-- **Tests:** No project tests run yet.
-- **Benchmarks:** No measurements available.
-- **Deployment:** Not started.
-- **Open next step:** Establish the repository and Phase 0 documentation/tooling foundation.
+- **Repository:** Existing Go repository with CLI, simulation engine, HTTP API, and browser client.
+- **Code implementation:** Simulation engine, CLI, HTTP API, and initial browser workflow implemented; consult the task tracker and architecture overview for scope.
+- **Tests:** Go simulation/API tests and frontend workflow tests implemented; see the verification log for actual command results.
+- **Benchmarks:** Do not claim performance results without reproducible measurements recorded in the verification log.
+- **Deployment:** Local API/browser workflow established; hosted deployment and production readiness are not verified.
+- **Open next step:** Complete milestone verification, update startup documentation, and continue the planned roadmap without overstating unfinished capabilities.
 
 Do not change the initial baseline to a completed status until actual repository evidence exists.
 

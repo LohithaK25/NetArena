@@ -304,3 +304,56 @@ func TestRequestServiceTimeIncludesInterruptedAttempt(t *testing.T) {
 		t.Errorf("ServiceTime() = %d, want %d", got, want)
 	}
 }
+
+func TestRetryPolicyRejectsExcessiveRetries(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxRetries int
+		wantError  bool
+	}{
+		{name: "zero retries", maxRetries: 0},
+		{name: "limit accepted", maxRetries: 100},
+		{name: "above limit rejected", maxRetries: 101, wantError: true},
+		{name: "negative retries rejected", maxRetries: -1, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := RetryPolicy{MaxRetries: tt.maxRetries}
+			err := policy.Validate()
+
+			if tt.wantError && err == nil {
+				t.Fatal("Validate() error = nil, want an error")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("Validate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestNewRequestDefaultsToPriorityZero(t *testing.T) {
+	request, err := NewRequest("request-1", 0)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	if got := request.Priority(); got != 0 {
+		t.Fatalf("Priority() = %d, want 0", got)
+	}
+}
+
+func TestNewRequestWithPriority(t *testing.T) {
+	request, err := NewRequestWithPriority("request-1", 0, 5)
+	if err != nil {
+		t.Fatalf("NewRequestWithPriority() error = %v", err)
+	}
+
+	if got := request.Priority(); got != 5 {
+		t.Fatalf("Priority() = %d, want 5", got)
+	}
+
+	if got := request.clone().Priority(); got != 5 {
+		t.Fatalf("cloned request Priority() = %d, want 5", got)
+	}
+}

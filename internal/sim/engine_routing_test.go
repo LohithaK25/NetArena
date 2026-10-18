@@ -1123,3 +1123,265 @@ func TestCancelledRetryDoesNotBlockWorkerRecovery(t *testing.T) {
 		t.Fatalf("request state = %s, want cancelled", request.State())
 	}
 }
+
+func TestWorkerRecoveryResumesQueuedRequestsByPriority(t *testing.T) {
+	engine, err := NewEngineWithTopology(1, 10, routingTestTopology())
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+
+	if err := engine.SetSchedulingPolicy(SchedulingPriority); err != nil {
+		t.Fatalf("SetSchedulingPolicy() error = %v", err)
+	}
+
+	// req-1 occupies the worker and fails when the worker goes offline.
+	if err := engine.ScheduleRoutedArrival("req-1", "client", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleRoutedArrivalWithPriority("low", "client", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleRoutedArrivalWithPriority("high", "client", 2, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleWorkerFailure("worker", 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	if got := requests["req-1"].State(); got != RequestFailed {
+		t.Errorf("req-1 state = %s, want failed", got)
+	}
+
+	for _, id := range []string{"low", "high"} {
+		if got := requests[id].State(); got != RequestSucceeded {
+			t.Errorf("%s state = %s, want succeeded", id, got)
+		}
+	}
+
+	highStart, highOK := requests["high"].StartedAt()
+	lowStart, lowOK := requests["low"].StartedAt()
+
+	if !highOK || highStart != 8 {
+		t.Errorf("high started at (%d, %v), want (8, true)", highStart, highOK)
+	}
+	if !lowOK || lowStart != 18 {
+		t.Errorf("low started at (%d, %v), want (18, true)", lowStart, lowOK)
+	}
+}
+
+func TestWorkerRetryPreservesRequestPriority(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker, Capacity: 1},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 10, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+	if err := engine.SetSchedulingPolicy(SchedulingPriority); err != nil {
+		t.Fatalf("SetSchedulingPolicy() error = %v", err)
+	}
+	if err := engine.SetRetryPolicy(RetryPolicy{
+		MaxRetries: 1,
+		Backoff:    3,
+	}); err != nil {
+		t.Fatalf("SetRetryPolicy() error = %v", err)
+	}
+
+	// This request starts first, fails with the worker, then waits to retry.
+	if err := engine.ScheduleRoutedArrivalWithPriority(
+		"retry-high", "client", 0, 10,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// This lower-priority request reaches the worker while it is offline.
+	if err := engine.ScheduleRoutedArrivalWithPriority(
+		"queued-low", "client", 2, 1,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.ScheduleWorkerFailure("worker", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ScheduleWorkerRecovery("worker", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	requests := engine.Requests()
+	for _, id := range []string{"retry-high", "queued-low"} {
+		if got := requests[id].State(); got != RequestSucceeded {
+			t.Errorf("%s state = %s, want succeeded", id, got)
+		}
+	}
+
+	highStart, highOK := requests["retry-high"].StartedAt()
+	lowStart, lowOK := requests["queued-low"].StartedAt()
+
+	if !highOK || highStart != 8 {
+		t.Errorf("retry-high started at (%d, %v), want (8, true)", highStart, highOK)
+	}
+	if !lowOK || lowStart != 18 {
+		t.Errorf("queued-low started at (%d, %v), want (18, true)", lowStart, lowOK)
+	}
+
+	if got := requests["retry-high"].Priority(); got != 10 {
+		t.Errorf("retry-high priority = %d, want 10", got)
+	}
+}
+
+func TestEngineRouteTracesReflectSelectedRoutingAlgorithm(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "relay", Type: NodeService},
+			{ID: "worker-slow", Type: NodeWorker},
+			{ID: "worker-fast", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker-slow", Latency: 8},
+			{From: "client", To: "relay", Latency: 2},
+			{From: "relay", To: "worker-fast", Latency: 2},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		algorithm RoutingAlgorithm
+		wantHops  []RouteTraceHop
+	}{
+		{
+			name:      "round robin",
+			algorithm: RoutingRoundRobin,
+			wantHops: []RouteTraceHop{
+				{
+					From:    "client",
+					To:      "worker-slow",
+					At:      0,
+					Latency: 8,
+					Status:  RouteHopForwarded,
+				},
+			},
+		},
+		{
+			name:      "shortest path",
+			algorithm: RoutingShortestPath,
+			wantHops: []RouteTraceHop{
+				{
+					From:    "client",
+					To:      "relay",
+					At:      0,
+					Latency: 2,
+					Status:  RouteHopForwarded,
+				},
+				{
+					From:    "relay",
+					To:      "worker-fast",
+					At:      2,
+					Latency: 2,
+					Status:  RouteHopForwarded,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := NewEngineWithTopology(1, 1, topology)
+			if err != nil {
+				t.Fatalf("NewEngineWithTopology() error = %v", err)
+			}
+			if err := engine.SetRoutingAlgorithm(tt.algorithm); err != nil {
+				t.Fatalf("SetRoutingAlgorithm() error = %v", err)
+			}
+			if err := engine.ScheduleRoutedArrival("request-1", "client", 0); err != nil {
+				t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+			}
+			if err := engine.Run(); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			if got := engine.Requests()["request-1"].State(); got != RequestSucceeded {
+				t.Fatalf("request state = %s, want succeeded", got)
+			}
+
+			hops := engine.RouteTraces()["request-1"]
+			if len(hops) != len(tt.wantHops) {
+				t.Fatalf("route hops = %+v, want %+v", hops, tt.wantHops)
+			}
+			for i, want := range tt.wantHops {
+				if hops[i] != want {
+					t.Errorf("hop %d = %+v, want %+v", i, hops[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestEngineRouteTracesRecordDroppedConnection(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{
+				From:        "client",
+				To:          "worker",
+				Latency:     3,
+				DropPackets: true,
+			},
+		},
+	}
+
+	engine, err := NewEngineWithTopology(1, 1, topology)
+	if err != nil {
+		t.Fatalf("NewEngineWithTopology() error = %v", err)
+	}
+	if err := engine.ScheduleRoutedArrival("request-1", "client", 0); err != nil {
+		t.Fatalf("ScheduleRoutedArrival() error = %v", err)
+	}
+	if err := engine.Run(); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := engine.Requests()["request-1"].State(); got != RequestFailed {
+		t.Fatalf("request state = %s, want failed", got)
+	}
+
+	hops := engine.RouteTraces()["request-1"]
+	if len(hops) != 1 {
+		t.Fatalf("route hops = %+v, want one dropped hop", hops)
+	}
+
+	want := RouteTraceHop{
+		From:    "client",
+		To:      "worker",
+		At:      0,
+		Latency: 3,
+		Status:  RouteHopDropped,
+	}
+	if hops[0] != want {
+		t.Errorf("route hop = %+v, want %+v", hops[0], want)
+	}
+}

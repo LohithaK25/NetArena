@@ -39,3 +39,6 @@ temp/
 # Local NetArena sweep reports
 /sweep-report.json
 /sweep-report.csv
+
+# Local API server executable
+/netarena-server.exe

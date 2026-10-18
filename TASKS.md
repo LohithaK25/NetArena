@@ -1,4 +1,4 @@
-# Current Tasks
+﻿# Current Tasks
 
 ## Phase 0 â€” Repository foundation
 - [x] Create initial repository directory structure.
@@ -135,3 +135,60 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Verify targeted tests, the full Go test suite, static analysis, and whitespace checks.
 - [x] Benchmark both APIs before and after the summary optimization.
 - [x] Review the final implementation and verification-log changes before committing.
+
+## Phase 2.15 - HTTP API and Browser Workflow
+- [x] Add the Go HTTP server entry point with configurable listen address.
+- [x] Implement health and simulation API endpoints with request validation and JSON errors.
+- [x] Add API handler tests for successful requests and invalid routes or methods.
+- [x] Scaffold the React and TypeScript frontend under `web/`.
+- [x] Add a scenario form for service capacity, service duration, and request arrivals.
+- [x] Connect the frontend to the Go API and display simulation results and errors.
+- [x] Add frontend tests for defaults, successful submissions, API errors, and arrival editing.
+- [x] Re-run the complete Go test suite, `go vet`, and Go build.
+- [x] Re-run frontend tests, lint, and production build.
+- [x] Record final verification results in `docs/development/verification-log.md`.
+- [x] Update architecture and testing documentation to reflect the implemented API and frontend.
+- [x] Document API and frontend startup instructions in the README.
+- [x] Add a README architecture diagram for the implemented API and browser workflow.
+- [x] Capture and reference a real dashboard screenshot in the README.
+- [x] Correct stale project-status and project-structure descriptions in the README.
+
+## Phase 2.16 - Seeded Randomness and Probabilistic Packet Loss
+
+- [x] Add engine-local random-number generation with seeded constructors while preserving legacy constructors.
+- [x] Add scenario seed configuration and reproducible scenario execution.
+- [x] Add configurable packet-loss probability to each directed connection.
+- [x] Validate probability boundaries and reject invalid floating-point values.
+- [x] Propagate connection loss settings through routing to the simulation engine.
+- [x] Apply probabilistic loss while preserving deterministic packet-drop behavior.
+- [x] Ensure zero-probability links do not consume random draws.
+- [x] Test probability boundaries, certain loss, seeded reproducibility, and legacy constructor compatibility.
+- [x] Verify the full Go test suite, static analysis, build, and whitespace checks.
+- [x] Document implementation, regression coverage, and limitations in the verification log.
+
+## Phase 3.1 - FIFO and Priority Scheduling
+
+- [x] Add validated FIFO and priority scheduling policies, with FIFO as the default.
+- [x] Add request priorities, with higher integer values representing higher priority.
+- [x] Preserve existing arrival methods and default request priorities for compatibility.
+- [x] Support explicit priorities on standard and topology-aware arrivals.
+- [x] Add scenario-level scheduling policy configuration and arrival priorities.
+- [x] Implement stable priority ordering in basic and worker waiting queues.
+- [x] Preserve FIFO order among requests with equal priority.
+- [x] Apply priority ordering to requests queued during worker outages and retries.
+- [x] Reject scheduling-policy changes after event processing starts.
+- [x] Test policy validation, default behavior, priority ordering, scenario execution, recovery, and retry behavior.
+- [x] Verify the full Go test suite, static analysis, build, and whitespace checks.
+
+
+## Phase 3.2 — Routing Algorithm and Route Visualization
+
+- [x] Implement routing-algorithm selection in the browser workflow.
+- [x] Add shortest-path routing configuration and route-trace visualization.
+- [x] Validate topology node IDs and references, node types and capacities, connection latency, packet-loss probability, and duplicate directed connections.
+- [x] Require network topology when shortest-path routing is selected.
+- [x] Use stable React identities for topology editor rows and node options, independent of editable node IDs.
+- [x] Add regression tests for duplicate node IDs, topology node editing/addition/removal, and shortest-path topology requirements.
+- [x] Verify frontend tests and production build.
+- [x] Complete final Go verification and review the overall working-tree status.
+- [x] Finish the architecture/testing documentation review.

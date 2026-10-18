@@ -1,6 +1,10 @@
 package sim
 
-import "testing"
+import (
+	"math"
+	"strings"
+	"testing"
+)
 
 func TestTopologyValidatesDirectedServicePath(t *testing.T) {
 	topology := Topology{
@@ -143,5 +147,105 @@ func TestTopologyRejectsNegativeConnectionLatency(t *testing.T) {
 
 	if err := topology.Validate(); err == nil {
 		t.Fatal("Validate() accepted negative connection latency")
+	}
+}
+
+func TestTopologyRejectsResourceLimitViolations(t *testing.T) {
+	tests := []struct {
+		name     string
+		topology Topology
+	}{
+		{
+			name: "too many nodes",
+			topology: Topology{
+				Nodes: make([]Node, MaxScenarioTopologyNodes+1),
+			},
+		},
+		{
+			name: "too many connections",
+			topology: Topology{
+				Nodes: []Node{
+					{ID: "node-a", Type: NodeClient},
+					{ID: "node-b", Type: NodeService},
+				},
+				Connections: make([]Connection, MaxScenarioTopologyConnections+1),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.topology.Validate()
+			if err == nil {
+				t.Fatal("Validate() error = nil, want an error")
+			}
+			if !strings.Contains(err.Error(), "exceeds maximum") {
+				t.Fatalf("Validate() error = %q, want resource-limit error", err)
+			}
+		})
+	}
+}
+
+func TestTopologyAcceptsConnectionWithPacketLoss(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{
+				From:        "client",
+				To:          "worker",
+				Latency:     2,
+				DropPackets: true,
+			},
+		},
+	}
+
+	if err := topology.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestTopologyValidatesPacketLossProbability(t *testing.T) {
+	tests := []struct {
+		name        string
+		probability float64
+		wantError   bool
+	}{
+		{name: "zero", probability: 0},
+		{name: "one", probability: 1},
+		{name: "intermediate", probability: 0.25},
+		{name: "negative", probability: -0.1, wantError: true},
+		{name: "above one", probability: 1.1, wantError: true},
+		{name: "NaN", probability: math.NaN(), wantError: true},
+		{name: "positive infinity", probability: math.Inf(1), wantError: true},
+		{name: "negative infinity", probability: math.Inf(-1), wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topology := Topology{
+				Nodes: []Node{
+					{ID: "client", Type: NodeClient},
+					{ID: "worker", Type: NodeWorker},
+				},
+				Connections: []Connection{
+					{
+						From:                  "client",
+						To:                    "worker",
+						PacketLossProbability: tt.probability,
+					},
+				},
+			}
+
+			err := topology.Validate()
+			if tt.wantError && err == nil {
+				t.Fatal("Validate() succeeded, want an error")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
 	}
 }

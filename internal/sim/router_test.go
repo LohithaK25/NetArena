@@ -269,3 +269,118 @@ func TestRouterFilteredRoutingPreservesRoundRobin(t *testing.T) {
 		}
 	}
 }
+
+func TestRouterPreservesPacketDropConfiguration(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{
+				From:        "client",
+				To:          "worker",
+				Latency:     2,
+				DropPackets: true,
+			},
+		},
+	}
+
+	router, err := NewRouter(topology)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+
+	link := router.outgoing["client"]
+	if len(link) != 1 {
+		t.Fatalf("outgoing links = %d, want 1", len(link))
+	}
+	if !link[0].dropPackets {
+		t.Fatal("router did not preserve DropPackets=true")
+	}
+}
+
+func TestRouterReturnsPacketDropStatus(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{
+				From:        "client",
+				To:          "worker",
+				Latency:     3,
+				DropPackets: true,
+			},
+		},
+	}
+
+	router, err := NewRouter(topology)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+
+	node, latency, dropped, err := router.NextHopWithLinkStatus(
+		"client",
+		func(Node) bool { return true },
+	)
+	if err != nil {
+		t.Fatalf("NextHopWithLinkStatus() error = %v", err)
+	}
+	if node.ID != "worker" || latency != 3 || !dropped {
+		t.Fatalf(
+			"selected link = (%q, %d, %t), want (%q, 3, true)",
+			node.ID, latency, dropped, "worker",
+		)
+	}
+}
+
+func TestNewRouterDefaultsToRoundRobin(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	router, err := NewRouter(topology)
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+
+	if got := router.algorithm; got != RoutingRoundRobin {
+		t.Fatalf("algorithm = %q, want %q", got, RoutingRoundRobin)
+	}
+}
+
+func TestNewRouterWithAlgorithm(t *testing.T) {
+	topology := Topology{
+		Nodes: []Node{
+			{ID: "client", Type: NodeClient},
+			{ID: "worker", Type: NodeWorker},
+		},
+		Connections: []Connection{
+			{From: "client", To: "worker", Latency: 1},
+		},
+	}
+
+	router, err := NewRouterWithAlgorithm(topology, RoutingShortestPath)
+	if err != nil {
+		t.Fatalf("NewRouterWithAlgorithm() error = %v", err)
+	}
+
+	if got := router.algorithm; got != RoutingShortestPath {
+		t.Fatalf("algorithm = %q, want %q", got, RoutingShortestPath)
+	}
+}
+
+func TestNewRouterWithAlgorithmRejectsUnsupportedAlgorithm(t *testing.T) {
+	_, err := NewRouterWithAlgorithm(Topology{}, RoutingAlgorithm("random"))
+	if err == nil {
+		t.Fatal("NewRouterWithAlgorithm() error = nil, want an error")
+	}
+}

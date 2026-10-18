@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -58,7 +59,7 @@ func RunExperimentSuite(s ExperimentSuite) (ExperimentSuiteResult, error) {
 	}
 
 	for _, scenario := range s.Scenarios {
-		scenarioResult, err := runValidatedScenario(scenario)
+		scenarioResult, err := runValidatedScenario(context.Background(), scenario)
 		if err != nil {
 			return ExperimentSuiteResult{}, fmt.Errorf(
 				"run scenario %q: %w",
