@@ -11,9 +11,9 @@
 - [x] Initialize the provisional Go module and add a minimal CLI with a focused test.
 - [x] Establish Go 1.27.0 CI and reproducible local quality commands.
 - [ ] Complete local race-detector verification with a compatible 64-bit C compiler.
-- [ ] Verify the workflow on GitHub and the instructions from a clean checkout after a remote and initial commit exist.
+- [x] Verify the workflow on GitHub and the instructions from a clean checkout after a remote and initial commit exist.
 
-The module path `example.com/netarena` is provisional until a canonical repository remote is configured. Local Go checks and exact tool versions are recorded in `docs/development/verification-log.md`; no hosted CI run is claimed.
+The module path `example.com/netarena` remains provisional. The repository remote is configured, hosted GitHub Actions passed, and clean-checkout verification is recorded in `docs/development/verification-log.md`.
 
 ## Phase 1 â€” Deterministic simulation foundation
 - [x] Define domain types and request lifecycle.
@@ -81,8 +81,8 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Add CLI tests for help, JSON/CSV exports, invalid arguments, and file errors.
 - [x] Ignore generated root-level sweep report files.
 - [x] Verify CLI integration with the full test suite and static analysis.
-- [ ] Verify the hosted CI workflow after configuring a Git remote.
-- [ ] Run race-detector verification in a supported environment.
+- [x] Verify the hosted CI workflow after configuring a Git remote.
+- [x] Run race-detector verification in a supported environment (hosted GitHub Actions).
 
 ## Phase 2.13 — CLI Usability and Documentation
 
@@ -93,7 +93,7 @@ The module path `example.com/netarena` is provisional until a canonical reposito
 - [x] Document project structure, architecture links, and known limitations.
 - [x] Verify the documented CLI commands with real JSON and CSV exports.
 - [x] Verify the full Go test suite, static analysis, and whitespace checks.
-- [ ] Verify the README instructions from a clean checkout after configuring a Git remote.
+- [x] Verify the README instructions from a clean checkout after configuring a Git remote.
 
 ## Phase 2.14.1 — Experiment Suite Benchmarking
 

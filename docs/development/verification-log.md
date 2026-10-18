@@ -1018,3 +1018,32 @@ Median of three runs. Times are per operation.
 - `Invoke-RestMethod http://127.0.0.1:8080/api/v1/health` — passed; returned `status: ok`.
 - `npm run test:e2e` from `web/` — passed; 1 Playwright test verified scenario submission to the Go API and displayed simulation results.
 - The initial E2E attempt failed because the API was not running. After starting the API, the test passed.
+
+## Clean Checkout and Hosted CI Confirmation
+
+**Date:** 2026-10-18
+**Commit verified:** `e74beb0` (`Build NetArena simulation API and web dashboard`)
+
+**Hosted verification**
+- GitHub Actions workflow for the pushed `main` commit — passed, as confirmed in the GitHub Actions UI.
+- Hosted CI includes Go formatting, `go vet`, race-enabled Go tests, Go build, frontend unit tests, lint, production build, and browser integration.
+
+**Fresh-clone verification**
+- Cloned `https://github.com/LohithaK25/NetArena.git` into `E:\NetArena-clean-checkout`; the clone checked out `e74beb0`.
+- `go test ./cmd/... ./internal/... -count=1` — passed across the five application packages.
+- `go vet ./cmd/... ./internal/...` — passed.
+- `go build ./cmd/... ./internal/...` — passed.
+- `npm ci` — passed; npm reported zero vulnerabilities.
+- `npm test -- --run` — passed; 2 test files and 14 tests.
+- `npm run lint` — passed.
+- `npm run build` — passed.
+- `npm run test:e2e` — passed; 1 Playwright test verified scenario submission to the Go API and display of simulation results.
+
+**Race-detector limitation**
+- Hosted GitHub Actions race-enabled tests passed as part of the successful workflow.
+- Local Windows `go test -race ./cmd/... ./internal/...` remains blocked before tests execute because the installed MinGW compiler reports `cc1.exe: sorry, unimplemented: 64-bit mode not compiled in`.
+- Local race-detector verification is therefore still outstanding; ordinary local test success is not treated as a substitute.
+
+**Go package discovery**
+- In the original working directory after frontend dependencies were installed, `go list ./...` discovered `web/node_modules/flatted/golang/pkg/flatted`.
+- Explicit `./cmd/... ./internal/...` commands avoid that unrelated frontend dependency and passed locally.

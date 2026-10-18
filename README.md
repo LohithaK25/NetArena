@@ -40,8 +40,8 @@ The simulation and CLI use the Go standard library.
 From the repository root:
 
 ```powershell
-go test ./... -count=1
-go vet ./...
+go test ./cmd/... ./internal/... -count=1
+go vet ./cmd/... ./internal/...
 go build -o (Join-Path $env:TEMP 'netarena.exe') ./cmd/netarena
 ```
 
