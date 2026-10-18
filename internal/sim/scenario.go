@@ -3,6 +3,7 @@ package sim
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -53,6 +54,12 @@ type ScenarioCancellation struct {
 	At        Tick
 }
 
+// ScenarioObjectives defines optional success criteria for a simulation.
+type ScenarioObjectives struct {
+	MinSuccessRate    *float64 `json:"minSuccessRate,omitempty"`
+	MaxAverageLatency *float64 `json:"maxAverageLatency,omitempty"`
+}
+
 // Scenario describes a deterministic simulation run.
 type Scenario struct {
 	Name             string
@@ -71,6 +78,7 @@ type Scenario struct {
 
 	RetryPolicy    RetryPolicy
 	CircuitBreaker *CircuitBreakerPolicy
+	Objectives     *ScenarioObjectives `json:"objectives,omitempty"`
 }
 
 // ScenarioResult contains the outputs of one scenario execution.
@@ -80,6 +88,7 @@ type ScenarioResult struct {
 	Summary     RunSummary
 	Metrics     Metrics
 	RouteTraces map[string][]RouteTraceHop
+	Objectives  ObjectiveEvaluation
 }
 
 // Validate checks the scenario configuration before execution.
@@ -211,6 +220,35 @@ func (s Scenario) Validate() error {
 	for _, cancellation := range s.Cancellations {
 		if err := s.validateRequestEvent(cancellation.RequestID, cancellation.At, "cancellation"); err != nil {
 			return err
+		}
+	}
+	if s.Objectives != nil {
+		objectives := s.Objectives
+
+		if objectives.MinSuccessRate != nil {
+			rate := *objectives.MinSuccessRate
+			if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 || rate > 1 {
+				return fmt.Errorf(
+					"minimum success rate must be between 0 and 1",
+				)
+			}
+		}
+
+		if objectives.MaxAverageLatency != nil {
+			latency := *objectives.MaxAverageLatency
+			if math.IsNaN(latency) || math.IsInf(latency, 0) || latency < 0 || latency > MaxScenarioTick {
+				return fmt.Errorf(
+					"maximum average latency must be between 0 and %d",
+					MaxScenarioTick,
+				)
+			}
+		}
+
+		if objectives.MinSuccessRate == nil &&
+			objectives.MaxAverageLatency == nil {
+			return fmt.Errorf(
+				"scenario objectives must define at least one criterion",
+			)
 		}
 	}
 
@@ -419,11 +457,22 @@ func runValidatedScenario(ctx context.Context, s Scenario) (ScenarioResult, erro
 		return ScenarioResult{}, fmt.Errorf("run scenario %q: %w", s.Name, err)
 	}
 
-	return ScenarioResult{
+	result := ScenarioResult{
 		Name:        s.Name,
 		Duration:    engine.CurrentTick(),
 		Summary:     engine.Summary(),
 		Metrics:     engine.Metrics(),
 		RouteTraces: engine.RouteTraces(),
-	}, nil
+	}
+
+	evaluation, err := EvaluateObjectives(s.Objectives, result)
+	if err != nil {
+		return ScenarioResult{}, fmt.Errorf(
+			"evaluate scenario objectives: %w",
+			err,
+		)
+	}
+
+	result.Objectives = evaluation
+	return result, nil
 }

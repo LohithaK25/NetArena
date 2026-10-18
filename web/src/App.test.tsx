@@ -44,6 +44,11 @@ const successfulResult = {
     workers: {},
   },
   routeTraces: {},
+  objectives: {
+    configured: false,
+    passed: true,
+    outcomes: [],
+  },
 }
 
 describe('NetArena dashboard', () => {
@@ -62,6 +67,68 @@ describe('NetArena dashboard', () => {
     expect(screen.getByText('AWAITING EXECUTION')).toBeInTheDocument()
   })
 
+  it('submits objective thresholds using the API fraction format', async () => {
+    const user = userEvent.setup()
+    mockRunSimulation.mockResolvedValue(successfulResult)
+
+    render(<App />)
+
+    await user.clear(screen.getByRole('spinbutton', { name: /MINIMUM SUCCESS RATE/ }))
+    await user.type(screen.getByRole('spinbutton', { name: /MINIMUM SUCCESS RATE/ }), '95')
+    await user.clear(screen.getByRole('spinbutton', { name: /MAXIMUM AVERAGE LATENCY/ }))
+    await user.type(screen.getByRole('spinbutton', { name: /MAXIMUM AVERAGE LATENCY/ }), '20')
+    await user.click(screen.getByRole('button', { name: /Run simulation/ }))
+
+    await waitFor(() => {
+      expect(mockRunSimulation).toHaveBeenCalledWith(expect.objectContaining({
+        objectives: {
+          minSuccessRate: 0.95,
+          maxAverageLatency: 20,
+        },
+      }))
+    })
+  })
+
+  it.each([
+    {
+      label: 'passing',
+      passed: true,
+      status: 'ALL PASSED',
+      outcomeMessage: 'Success rate 100.0%; minimum required 95.0%',
+    },
+    {
+      label: 'failing',
+      passed: false,
+      status: 'NOT MET',
+      outcomeMessage: 'Success rate 50.0%; minimum required 95.0%',
+    },
+  ])('renders $label objective evaluation', async ({ passed, status, outcomeMessage }) => {
+    const user = userEvent.setup()
+    mockRunSimulation.mockResolvedValue({
+      ...successfulResult,
+      objectives: {
+        configured: true,
+        passed,
+        outcomes: [
+          {
+            name: 'minimum_success_rate',
+            passed,
+            actual: passed ? 1 : 0.5,
+            threshold: 0.95,
+            message: outcomeMessage,
+          },
+        ],
+      },
+    })
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /Run simulation/ }))
+
+    expect(await screen.findByText(status)).toBeInTheDocument()
+    expect(screen.getByText('minimum_success_rate')).toBeInTheDocument()
+    expect(screen.getByText(passed ? 'PASS' : 'FAIL')).toBeInTheDocument()
+    expect(screen.getByText(outcomeMessage)).toBeInTheDocument()
+  })
   it('submits the scenario and displays the returned metrics', async () => {
     const user = userEvent.setup()
     mockRunSimulation.mockResolvedValue(successfulResult)

@@ -14,6 +14,8 @@ function App() {
   const [name, setName] = useState('api-smoke-test')
   const [capacity, setCapacity] = useState(1)
   const [serviceDuration, setServiceDuration] = useState(5)
+  const [minSuccessRate, setMinSuccessRate] = useState('')
+  const [maxAverageLatency, setMaxAverageLatency] = useState('')
   const [arrivals, setArrivals] = useState<SimulationArrival[]>([
     { requestID: 'request-1', at: 0 },
     { requestID: 'request-2', at: 1 },
@@ -22,7 +24,7 @@ function App() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-    const [routingAlgorithm, setRoutingAlgorithm] =
+  const [routingAlgorithm, setRoutingAlgorithm] =
     useState<RoutingAlgorithm>('round_robin')
   const [topologyEnabled, setTopologyEnabled] = useState(false)
   const [nodes, setNodes] = useState<TopologyNode[]>([
@@ -63,9 +65,9 @@ function App() {
       current.map((arrival, i) =>
         i === index
           ? {
-              ...arrival,
-              [field]: field === 'at' ? Number(value) : value,
-            }
+            ...arrival,
+            [field]: field === 'at' ? Number(value) : value,
+          }
           : arrival,
       ),
     )
@@ -88,12 +90,12 @@ function App() {
       current.map((node, i) =>
         i === index
           ? {
-              ...node,
-              [field]:
-                field === 'type' || field === 'capacity'
-                  ? Number(value)
-                  : value,
-            }
+            ...node,
+            [field]:
+              field === 'type' || field === 'capacity'
+                ? Number(value)
+                : value,
+          }
           : node,
       ),
     )
@@ -136,14 +138,14 @@ function App() {
       current.map((connection, i) =>
         i === index
           ? {
-              ...connection,
-              [field]:
-                field === 'dropPackets'
-                  ? Boolean(value)
-                  : field === 'from' || field === 'to'
-                    ? String(value)
-                    : Number(value),
-            }
+            ...connection,
+            [field]:
+              field === 'dropPackets'
+                ? Boolean(value)
+                : field === 'from' || field === 'to'
+                  ? String(value)
+                  : Number(value),
+          }
           : connection,
       ),
     )
@@ -233,20 +235,20 @@ function App() {
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-  event.preventDefault()
-  setError('')
-  setResult(null)
+    event.preventDefault()
+    setError('')
+    setResult(null)
 
-  const validationError = validateTopology()
-  if (validationError) {
-    setError(validationError)
-    return
-  }
+    const validationError = validateTopology()
+    if (validationError) {
+      setError(validationError)
+      return
+    }
 
-  setLoading(true)
+    setLoading(true)
 
     try {
-            const simulation = await runSimulation({
+      const simulation = await runSimulation({
         name: name.trim(),
         serviceCapacity: capacity,
         serviceDuration,
@@ -255,14 +257,26 @@ function App() {
           requestID: arrival.requestID.trim(),
           ...(topologyEnabled ? { sourceNode } : {}),
         })),
+        ...(minSuccessRate.trim() !== '' || maxAverageLatency.trim() !== ''
+          ? {
+            objectives: {
+              ...(minSuccessRate.trim() !== ''
+                ? { minSuccessRate: Number(minSuccessRate) / 100 }
+                : {}),
+              ...(maxAverageLatency.trim() !== ''
+                ? { maxAverageLatency: Number(maxAverageLatency) }
+                : {}),
+            },
+          }
+          : {}),
         ...(topologyEnabled
           ? {
-              routingAlgorithm,
-              topology: {
-                nodes,
-                connections,
-              } satisfies SimulationTopology,
-            }
+            routingAlgorithm,
+            topology: {
+              nodes,
+              connections,
+            } satisfies SimulationTopology,
+          }
           : {}),
       })
       setResult(simulation)
@@ -388,6 +402,40 @@ function App() {
                 <option value="shortest_path">Shortest path</option>
               </select>
             </label>
+
+            <div className="objective-fields">
+              <div className="section-label">SUCCESS CRITERIA / OPTIONAL</div>
+
+              <label className="field">
+                <span>MINIMUM SUCCESS RATE (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={minSuccessRate}
+                  onChange={(event) => setMinSuccessRate(event.target.value)}
+                  placeholder="e.g. 95"
+                />
+              </label>
+
+              <label className="field">
+                <span>MAXIMUM AVERAGE LATENCY (TICKS)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={maxAverageLatency}
+                  onChange={(event) => setMaxAverageLatency(event.target.value)}
+                  placeholder="e.g. 20"
+                />
+              </label>
+
+              <p>
+                Set either or both thresholds to evaluate the scenario against
+                your targets.
+              </p>
+            </div>
 
             <label className="topology-toggle" style={{ marginTop: 18 }}>
               <input
@@ -750,6 +798,58 @@ function App() {
                   <strong>{result.duration} <small>ticks</small></strong>
                 </div>
               </div>
+
+              <section className="metric-panel objective-result-panel">
+                <div className="metric-heading">
+                  <div>
+                    <div className="section-label">SCENARIO / OBJECTIVES</div>
+                    <h3>Objective evaluation</h3>
+                  </div>
+                  {result.objectives.configured && (
+                    <span
+                      className={result.objectives.passed
+                        ? 'objective-status objective-passed'
+                        : 'objective-status objective-failed'}
+                    >
+                      {result.objectives.passed ? 'ALL PASSED' : 'NOT MET'}
+                    </span>
+                  )}
+                </div>
+
+                {!result.objectives.configured ? (
+                  <p className="objective-empty">
+                    No success criteria configured. Set optional thresholds and
+                    run again to evaluate this scenario against your targets.
+                  </p>
+                ) : (
+                  <div className="objective-outcomes">
+                    {result.objectives.outcomes.map((outcome) => (
+                      <article className="objective-outcome" key={outcome.name}>
+                        <div className="objective-outcome-heading">
+                          <strong>{outcome.name}</strong>
+                          <span>{outcome.passed ? 'PASS' : 'FAIL'}</span>
+                        </div>
+                        <p>{outcome.message}</p>
+                        <div className="objective-values">
+                          <span>
+                            Actual:{' '}
+                            {outcome.name === 'minimum_success_rate'
+                              ? `${(outcome.actual * 100).toFixed(1)}%`
+                              : outcome.actual.toFixed(2)}
+                          </span>
+                          <span>
+                            Threshold:{' '}
+                            {outcome.name === 'minimum_success_rate'
+                              ? `${(outcome.threshold * 100).toFixed(1)}%`
+                              : outcome.threshold.toFixed(2)}
+                          </span>
+
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
 
               <div className="stat-grid">
                 {Object.entries(result.routeTraces ?? {}).length > 0 && (

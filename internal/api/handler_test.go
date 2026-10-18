@@ -372,6 +372,73 @@ func TestRunSimulationHandlesConcurrentRequests(t *testing.T) {
 	}
 }
 
+// Configured objective thresholds must be accepted and their evaluation
+// must be included in the API response.
+func TestRunSimulationEndpointEvaluatesObjectives(t *testing.T) {
+	payload := `{
+                "name": "objective-api-test",
+                "serviceCapacity": 1,
+                "serviceDuration": 1,
+                "arrivals": [
+                        {"requestId": "req-1", "at": 0}
+                ],
+                "objectives": {
+                        "minSuccessRate": 0.95,
+                        "maxAverageLatency": 10
+                }
+        }`
+
+	request := httptest.NewRequest(
+		http.MethodPost, "/api/v1/simulations", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s",
+			response.Code, http.StatusOK, response.Body.String())
+	}
+
+	var body struct {
+		Objectives struct {
+			Configured bool `json:"configured"`
+			Passed     bool `json:"passed"`
+			Outcomes   []struct {
+				Name      string  `json:"name"`
+				Passed    bool    `json:"passed"`
+				Actual    float64 `json:"actual"`
+				Threshold float64 `json:"threshold"`
+				Message   string  `json:"message"`
+			} `json:"outcomes"`
+		} `json:"objectives"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode simulation response: %v", err)
+	}
+
+	if !body.Objectives.Configured {
+		t.Fatal("objectives.configured = false, want true")
+	}
+	if !body.Objectives.Passed {
+		t.Errorf("objectives.passed = false, want true")
+	}
+	if len(body.Objectives.Outcomes) != 2 {
+		t.Fatalf("objective outcomes = %d, want 2", len(body.Objectives.Outcomes))
+	}
+	if body.Objectives.Outcomes[0].Name != "minimum_success_rate" {
+		t.Errorf("first objective name = %q", body.Objectives.Outcomes[0].Name)
+	}
+	if body.Objectives.Outcomes[0].Threshold != 0.95 {
+		t.Errorf("success threshold = %v, want 0.95", body.Objectives.Outcomes[0].Threshold)
+	}
+	if body.Objectives.Outcomes[1].Name != "maximum_average_latency" {
+		t.Errorf("second objective name = %q", body.Objectives.Outcomes[1].Name)
+	}
+	if body.Objectives.Outcomes[1].Threshold != 10 {
+		t.Errorf("latency threshold = %v, want 10", body.Objectives.Outcomes[1].Threshold)
+	}
+}
 func TestRunSimulationEndpointReturnsRouteTraces(t *testing.T) {
 	payload := `{
 		"name": "route-trace-api",

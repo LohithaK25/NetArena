@@ -29,6 +29,24 @@ export interface SimulationTopology {
   connections: TopologyConnection[]
 }
 
+export interface ScenarioObjectives {
+  minSuccessRate?: number
+  maxAverageLatency?: number
+}
+
+export interface ObjectiveOutcome {
+  name: string
+  passed: boolean
+  actual: number
+  threshold: number
+  message: string
+}
+
+export interface ObjectiveEvaluation {
+  configured: boolean
+  passed: boolean
+  outcomes: ObjectiveOutcome[]
+}
 export interface SimulationScenario {
   name: string
   serviceCapacity: number
@@ -36,6 +54,7 @@ export interface SimulationScenario {
   arrivals: SimulationArrival[]
   routingAlgorithm?: RoutingAlgorithm
   topology?: SimulationTopology
+  objectives?: ScenarioObjectives
 }
 
 export interface LatencyMetrics {
@@ -109,6 +128,7 @@ export interface SimulationResult {
   summary: SimulationSummary
   metrics: SimulationMetrics
   routeTraces: RouteTraces
+  objectives: ObjectiveEvaluation
 }
 
 interface ApiError {
@@ -222,6 +242,28 @@ function isRouteTraces(value: unknown): value is RouteTraces {
   )
 }
 
+function isObjectiveEvaluation(
+  value: unknown,
+): value is ObjectiveEvaluation {
+  return (
+    isRecord(value) &&
+    typeof value.configured === 'boolean' &&
+    typeof value.passed === 'boolean' &&
+    Array.isArray(value.outcomes) &&
+    value.outcomes.every(
+      (outcome) =>
+        isRecord(outcome) &&
+        typeof outcome.name === 'string' &&
+        typeof outcome.passed === 'boolean' &&
+        typeof outcome.actual === 'number' &&
+        Number.isFinite(outcome.actual) &&
+        typeof outcome.threshold === 'number' &&
+        Number.isFinite(outcome.threshold) &&
+        typeof outcome.message === 'string',
+    )
+  )
+}
+
 function isSimulationResult(value: unknown): value is SimulationResult {
   return (
     isRecord(value) &&
@@ -230,7 +272,8 @@ function isSimulationResult(value: unknown): value is SimulationResult {
     Number.isFinite(value.duration) &&
     isSimulationSummary(value.summary) &&
     isSimulationMetrics(value.metrics) &&
-    isRouteTraces(value.routeTraces)
+    isRouteTraces(value.routeTraces) &&
+    isObjectiveEvaluation(value.objectives)
 )
 }
 

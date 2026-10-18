@@ -35,6 +35,11 @@ const validResult: SimulationResult = {
     workers: {},
   },
   routeTraces: {},
+  objectives: {
+    configured: false,
+    passed: true,
+    outcomes: [],
+  },
 }
 
 function mockResponse(
@@ -68,6 +73,31 @@ describe('runSimulation', () => {
     ).resolves.toEqual(validResult)
   })
 
+  it('rejects malformed objective evaluations', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse({
+      ...validResult,
+      objectives: {
+        configured: true,
+        passed: true,
+        outcomes: [{
+          name: 'minimum_success_rate',
+          passed: true,
+          actual: 'not-a-number',
+          threshold: 0.95,
+          message: 'invalid actual value',
+        }],
+      },
+    })))
+
+    await expect(
+      runSimulation({
+        name: 'api-smoke-test',
+        serviceCapacity: 1,
+        serviceDuration: 5,
+        arrivals: [],
+      }),
+    ).rejects.toThrow(/invalid simulation response/i)
+  })
   it('rejects a successful response with invalid JSON data shape', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse({
       name: 'api-smoke-test',

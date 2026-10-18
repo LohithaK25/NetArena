@@ -1172,3 +1172,69 @@
     padding: 10px;
   }
 }
+
+.objective-result-panel {
+  margin-bottom: 18px;
+}
+
+.objective-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.objective-passed {
+  color: #176b45;
+  background: #e1f5e9;
+}
+
+.objective-failed {
+  color: #a52b35;
+  background: #fde8e9;
+}
+
+.objective-empty {
+  color: var(--muted, #667085);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.objective-outcomes {
+  display: grid;
+  gap: 12px;
+}
+
+.objective-outcome {
+  padding: 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+}
+
+.objective-outcome-heading,
+.objective-values {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.objective-outcome-heading span {
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.objective-outcome p {
+  margin: 8px 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.objective-values {
+  flex-wrap: wrap;
+  color: var(--muted, #667085);
+  font-size: 0.8rem;
+}

@@ -180,6 +180,7 @@ type simulationResponse struct {
 	Summary     summaryResponse                `json:"summary"`
 	Metrics     metricsResponse                `json:"metrics"`
 	RouteTraces map[string][]sim.RouteTraceHop `json:"routeTraces"`
+	Objectives  sim.ObjectiveEvaluation        `json:"objectives"`
 }
 
 func toSimulationResponse(result sim.ScenarioResult) simulationResponse {
@@ -204,6 +205,7 @@ func toSimulationResponse(result sim.ScenarioResult) simulationResponse {
 		Name:        result.Name,
 		Duration:    int64(result.Duration),
 		RouteTraces: result.RouteTraces,
+		Objectives:  result.Objectives,
 		Summary: summaryResponse{
 			TotalRequests:        s.TotalRequests,
 			CreatedRequests:      s.CreatedRequests,
