@@ -1,7 +1,7 @@
 # NetArena — Project Handbook & Engineering Journal
 
-> **Document status:** Active engineering handbook; implementation and verification records updated through the HTTP API and browser workflow milestone
-> **Project status:** Deterministic simulation engine, Go CLI, HTTP API, and initial React/TypeScript browser workflow implemented; broader game and production capabilities remain planned
+> **Document status:** Active engineering handbook; implementation and verification records include scenario objective evaluation and hosted CI / clean-checkout verification
+> **Project status:** Deterministic simulation engine, Go CLI, HTTP API, scenario objective evaluation, and initial React/TypeScript browser workflow implemented; broader game and production capabilities remain planned
 > **Purpose:** Single source of truth for the project vision, architecture, implementation decisions, testing, deployment, and the reasoning needed to explain the project in interviews.
 
 ---
@@ -481,7 +481,7 @@ For each meaningful test run, record:
 
 ## 9. Milestone roadmap and acceptance criteria
 
-All milestones below are **planned**, not completed.
+The roadmap describes milestone-level goals; individual tasks may be implemented before an entire milestone is complete. Completed subfeatures are identified explicitly, and remaining acceptance criteria stay open until verified.
 
 ### Phase 0 — Project charter and repository foundation
 
@@ -533,7 +533,7 @@ Tasks:
 - Connect the UI to the Go backend.
 - Show actual simulation state and metrics.
 - Add start, pause, reset, and run controls with well-defined semantics.
-- Add scenario objectives and transparent scoring.
+- [Implemented subfeature] Add configurable minimum success-rate and maximum average end-to-end latency objective thresholds with pass/fail evaluation. Broader game scoring and the complete results/comparison experience remain planned.
 - Add a results/comparison view.
 - Add frontend unit/component and end-to-end tests.
 
@@ -843,7 +843,7 @@ Status: Planned / In progress / Implemented / Verified / Blocked
 - **Tests:** Go simulation/API tests and frontend workflow tests implemented; see the verification log for actual command results.
 - **Benchmarks:** Do not claim performance results without reproducible measurements recorded in the verification log.
 - **Deployment:** Local API/browser workflow established; hosted deployment and production readiness are not verified.
-- **Open next step:** Complete milestone verification, update startup documentation, and continue the planned roadmap without overstating unfinished capabilities.
+- **Open next step:** Continue the single-player vertical slice with a repeatable scenario comparison workflow, after checking existing experiment-suite/reporting capabilities to avoid duplication. Keep persistence, authentication, multiplayer, and production deployment explicitly planned until implemented and verified.
 
 Do not change the initial baseline to a completed status until actual repository evidence exists.
 

@@ -1,19 +1,19 @@
 # Architecture Overview
 
-**Status:** Deterministic simulation engine, Go CLI, HTTP API, and initial React/TypeScript browser workflow implemented. Persistence, authentication, multiplayer, and the complete game remain planned.
+**Status:** Deterministic simulation engine, Go CLI, HTTP API, scenario objective evaluation, and initial React/TypeScript browser workflow implemented. Persistence, authentication, multiplayer, and the complete game remain planned.
 
 ## Current implementation
 
 - `cmd/netarena` provides the simulation CLI, including service-capacity sweeps.
 - `cmd/netarena-server` starts the HTTP API. Its listen address is configurable through `NETARENA_ADDR`; the default is `127.0.0.1:8080`.
 - `internal/api` implements `GET /api/v1/health` and `POST /api/v1/simulations`, including request validation and JSON error responses.
-- `internal/sim` contains the deterministic discrete-event simulation, routing, request lifecycle, failure/recovery, resilience policies, metrics, scenarios, and experiment reporting.
+- `internal/sim` contains the deterministic discrete-event simulation, routing, request lifecycle, failure/recovery, resilience policies, metrics, scenarios, objective evaluation, and experiment reporting.
 - `web` contains the React and TypeScript browser client. It configures simulation scenarios, supports network-topology editing and routing-algorithm selection, submits requests to the API, and displays simulation results, route traces, and errors. The browser validates topology input before submission; the simulation engine remains authoritative for execution.
 - Automated Go and frontend tests cover the implemented components. Verification evidence and outstanding limitations belong in `docs/development/verification-log.md`.
 
 The browser workflow is an initial vertical slice, not a complete game. Durable persistence, authentication, multiplayer, and real-time updates are not implemented by this milestone.
 
-The module path is provisionally `example.com/netarena` because no Git remote is configured. Replace it with the canonical repository path before publishing or introducing imports that depend on it.
+The Go module path is currently `example.com/netarena`, which is a placeholder. The repository has a configured Git remote; changing the module path is a separate compatibility decision and should be done deliberately if canonical imports or module distribution are needed.
 
 ## Initial architecture
 

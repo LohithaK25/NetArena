@@ -1047,3 +1047,36 @@ Median of three runs. Times are per operation.
 **Go package discovery**
 - In the original working directory after frontend dependencies were installed, `go list ./...` discovered `web/node_modules/flatted/golang/pkg/flatted`.
 - Explicit `./cmd/... ./internal/...` commands avoid that unrelated frontend dependency and passed locally.
+
+## Scenario Objectives and Evaluation — Documentation reconciliation
+
+**Date:** 2026-10-19
+**Feature commit:** `b8c644e` (`feat: add scenario objectives and evaluation`)
+
+**Implemented feature summary**
+
+- Scenario configuration supports a minimum success-rate objective and a maximum average end-to-end latency objective.
+- Objective evaluation is returned with simulation results and shown in the browser workflow.
+- These are objective threshold checks, not a finalized overall game-scoring formula.
+
+**Previously recorded feature verification**
+
+- Go tests, `go vet`, and Go build — passed.
+- Frontend tests — 18/18 passed across 2 test files.
+- `npm run lint` and `npm run build` — passed.
+- `git diff --check` — passed; Windows line-ending warnings were reported.
+- These results are carried forward from the feature work; this documentation-only update does not rerun or independently re-establish them.
+
+**Repository and CI status**
+
+- The reviewed checkout was clean at `b8c644e`, tracking `origin/main`.
+- Hosted GitHub Actions and clean-checkout verification are recorded above for commit `e74beb0`; hosted race-enabled tests passed in that workflow.
+- Local Windows race-enabled tests remain blocked before test execution by the installed MinGW compiler's unsupported 64-bit mode.
+- The Go module path remains `example.com/netarena`; migrating it is outside this documentation-only change.
+
+**Documentation scope**
+
+- Updated README, architecture overview, project handbook, testing strategy, and task tracker to reflect the implemented objective feature and recorded verification.
+- Historical entries above are preserved rather than rewritten.
+- No application code, dependencies, or API contracts were changed.
+- Documentation diff reviewed; `git diff --check` reported no whitespace errors. Git reported LF-to-CRLF normalization warnings for affected files.

@@ -6,7 +6,7 @@ The project is being developed toward a simulation and strategy game in which pl
 
 ## Project status
 
-**Current milestone: HTTP API and initial browser workflow**
+**Current milestone: simulation mechanics, scenario objectives, HTTP API, and browser workflow**
 
 Implemented:
 - Deterministic discrete-event simulation with virtual time and explicit event ordering.
@@ -16,12 +16,12 @@ Implemented:
 - Worker failure injection and recovery.
 - Retry policies and circuit breakers.
 - Scenario execution, experiment suites, and comparative reports.
+- Scenario objectives with minimum success-rate and maximum average end-to-end latency thresholds, evaluated against simulation results.
 - Service-capacity sweeps with JSON and CSV report exports.
 - CLI argument validation and automated Go tests.
 
-Not yet implemented or verified:
-- Hosted CI execution on GitHub.
-- Race-detector verification in a compatible local environment.
+Not yet implemented or still limited:
+- Successful local Windows race-detector execution in a compatible environment (hosted race-enabled CI has passed).
 - Durable persistence, authentication, multiplayer, and a complete playable game experience.
 
 See [TASKS.md](TASKS.md) for milestone status and [the verification log](docs/development/verification-log.md) for evidence.
@@ -306,8 +306,8 @@ The directory layout includes planned work areas; their presence does not imply 
 
 ## Known limitations
 
-- The Go module path is currently `example.com/netarena`, a provisional path that should be replaced with the canonical repository path before publishing.
-- No Git remote is currently configured, so hosted CI has not been verified.
-- Local race-detector verification remains blocked by the current compiler toolchain.
+- The Go module path remains `example.com/netarena`, a placeholder module path. Consider migrating to the repository's canonical module path separately if external imports or module distribution require it.
+- Hosted GitHub Actions CI has passed for the recorded commit; see the verification log. The local race-detector limitation remains documented below.
+- Local Windows race-detector verification remains blocked by the installed MinGW toolchain; hosted race-enabled CI passed.
 - Capacity sweeps use the existing non-topology scenario API. They do not yet represent topology worker-capacity sweeps.
-- The HTTP API and initial browser workflow are implemented, but persistence, authentication, multiplayer, and a complete game experience remain future work.
+- The HTTP API and initial browser workflow support scenario configuration, objective evaluation, and simulation results; persistence, authentication, multiplayer, and a complete game experience remain future work.

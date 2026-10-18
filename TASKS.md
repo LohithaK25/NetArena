@@ -192,3 +192,12 @@ The module path `example.com/netarena` remains provisional. The repository remot
 - [x] Verify frontend tests and production build.
 - [x] Complete final Go verification and review the overall working-tree status.
 - [x] Finish the architecture/testing documentation review.
+
+## Phase 3.3 — Scenario Objectives and Evaluation
+
+- [x] Add configurable minimum success-rate and maximum average end-to-end latency objectives.
+- [x] Evaluate configured objectives against simulation results and expose evaluation in API responses.
+- [x] Display configured objectives and pass/fail evaluation in the browser workflow.
+- [x] Add regression tests for objective validation, evaluation, API output, and frontend display.
+- [x] Verify Go tests, static analysis, build, frontend tests, lint, and production build.
+- [x] Record implementation and verification evidence in the development log.
